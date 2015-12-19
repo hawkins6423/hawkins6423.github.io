@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <!-- 
+      The ReST vs CQRS: The Trigger Pattern
+ parameters will be replaced with the 
+      document title extracted from the <h1> element or
+      file name, if there is no <h1> heading
+    -->
+    <title>ReST vs CQRS: The Trigger Pattern
+</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="http://code.jquery.com/jquery-1.8.0.js"></script>
+    <script src="http://code.jquery.com/ui/1.8.23/jquery-ui.js"></script>
+    <script src="http://netdna.bootstrapcdn.com/twitter-bootstrap/2.2.1/js/bootstrap.min.js"></script>
+    <script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link href="http://netdna.bootstrapcdn.com/twitter-bootstrap/2.2.1/css/bootstrap-combined.min.css" rel="stylesheet">
+    <link type="text/css" rel="stylesheet" href="content/style.css" />
+    <script src="content/tips.js" type="text/javascript"></script>
+    <!-- HTML5 shim, for IE6-8 support of HTML5 elements -->
+    <!--[if lt IE 9]>
+      <script src="http://html5shim.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="container">
+      <div class="row" style="margin-top:30px">
+        <div class="span1"></div>
+        <div class="span10" id="main">
+          <h1>ReST vs CQRS: The Trigger Pattern</h1>
+
+<h3><em>Matt Hawkins</em> <a href="https://twitter.com/mattchawkins">@mattchawkins</a></h3>
+
+<hr />
+
+<h3>Introduction</h3>
+
+<blockquote>
+  <p>I've found that most online examples/blogs of Command Query Responsibility Segregation (CQRS) with Event Sourcing (ES) 
+and Domain Driven Design (DDD) are fairly trivial. After trudging the road to create one 
+of these behemoths on a production scale, in a complex financial domain, I’ve discovered 
+that CQRS and ReST can be quite orthogonal.</p>
+</blockquote>
+
+<blockquote>
+  <p>The problem arises when you consider the limited number of HTTP methods that you have to 
+execute non-query requests on the ReSTful API. In this blog post we’re going to focus on 
+two verbs: POST and PUT. How do you perform multiple complex state changes with one or 
+two verbs while still being ReSTful and not providing explicit intent to the API? I’ve 
+found a few compelling solutions to this problem, with the winner being the <strong>trigger 
+pattern</strong>.</p>
+</blockquote>
+
+<hr />
+
+<h3>Part 1: Domain Model</h3>
+
+<p>Let’s consider the domain of a <code>Car</code>. We’ll assume this domain requires a granular log of 
+all state changes. Obviously we wouldn’t be changing <code>CarID</code>, but it’s likely the <code>Color</code>, 
+<code>Mileage</code>, <code>Condition</code>, and <code>Owner</code> may change during a car’s lifecycle.</p>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l"> 1: </span>
+<span class="l"> 2: </span>
+<span class="l"> 3: </span>
+<span class="l"> 4: </span>
+<span class="l"> 5: </span>
+<span class="l"> 6: </span>
+<span class="l"> 7: </span>
+<span class="l"> 8: </span>
+<span class="l"> 9: </span>
+<span class="l">10: </span>
+<span class="l">11: </span>
+<span class="l">12: </span>
+<span class="l">13: </span>
+<span class="l">14: </span>
+<span class="l">15: </span>
+<span class="l">16: </span>
+<span class="l">17: </span>
+<span class="l">18: </span>
+<span class="l">19: </span>
+<span class="l">20: </span>
+<span class="l">21: </span>
+<span class="l">22: </span>
+<span class="l">23: </span>
+<span class="l">24: </span>
+<span class="l">25: </span>
+<span class="l">26: </span>
+<span class="l">27: </span>
+<span class="l">28: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp">[&lt;<span onmouseout="hideTip(event, 'fs71', 130)" onmouseover="showTip(event, 'fs71', 130)" class="t">CustomEquality</span>;<span onmouseout="hideTip(event, 'fs72', 131)" onmouseover="showTip(event, 'fs72', 131)" class="t">NoComparison</span>&gt;]
+<span class="k">type</span> <span onmouseout="hideTip(event, 'fs73', 132)" onmouseover="showTip(event, 'fs73', 132)" class="t">Car</span> <span class="o">=</span>
+  { <span onmouseout="hideTip(event, 'fs74', 133)" onmouseover="showTip(event, 'fs74', 133)" class="i">CarID</span>     <span class="o">:</span> <span onmouseout="hideTip(event, 'fs9', 134)" onmouseover="showTip(event, 'fs9', 134)" class="t">Guid</span> 
+    <span onmouseout="hideTip(event, 'fs75', 135)" onmouseover="showTip(event, 'fs75', 135)" class="i">Year</span>      <span class="o">:</span> <span onmouseout="hideTip(event, 'fs12', 136)" onmouseover="showTip(event, 'fs12', 136)" class="t">int</span>
+    <span onmouseout="hideTip(event, 'fs76', 137)" onmouseover="showTip(event, 'fs76', 137)" class="i">CarType</span>   <span class="o">:</span> <span onmouseout="hideTip(event, 'fs76', 138)" onmouseover="showTip(event, 'fs76', 138)" class="t">CarType</span>
+    <span onmouseout="hideTip(event, 'fs77', 139)" onmouseover="showTip(event, 'fs77', 139)" class="i">Color</span>     <span class="o">:</span> <span onmouseout="hideTip(event, 'fs77', 140)" onmouseover="showTip(event, 'fs77', 140)" class="t">Color</span>
+    <span onmouseout="hideTip(event, 'fs78', 141)" onmouseover="showTip(event, 'fs78', 141)" class="i">Mileage</span>   <span class="o">:</span> <span onmouseout="hideTip(event, 'fs12', 142)" onmouseover="showTip(event, 'fs12', 142)" class="t">int</span>
+    <span onmouseout="hideTip(event, 'fs79', 143)" onmouseover="showTip(event, 'fs79', 143)" class="i">VIN</span>       <span class="o">:</span> <span onmouseout="hideTip(event, 'fs14', 144)" onmouseover="showTip(event, 'fs14', 144)" class="t">string</span>
+    <span onmouseout="hideTip(event, 'fs80', 145)" onmouseover="showTip(event, 'fs80', 145)" class="i">Condition</span> <span class="o">:</span> <span onmouseout="hideTip(event, 'fs80', 146)" onmouseover="showTip(event, 'fs80', 146)" class="t">Condition</span>
+    <span onmouseout="hideTip(event, 'fs81', 147)" onmouseover="showTip(event, 'fs81', 147)" class="i">Owner</span>     <span class="o">:</span> <span onmouseout="hideTip(event, 'fs9', 148)" onmouseover="showTip(event, 'fs9', 148)" class="t">Guid</span> }
+  <span class="c">// DDD Entities have identity equality</span>
+  <span class="k">override</span> <span onmouseout="hideTip(event, 'fs82', 149)" onmouseover="showTip(event, 'fs82', 149)" class="i">this</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs83', 150)" onmouseover="showTip(event, 'fs83', 150)" class="f">Equals</span> (<span onmouseout="hideTip(event, 'fs84', 151)" onmouseover="showTip(event, 'fs84', 151)" class="i">that</span> <span class="o">:</span><span onmouseout="hideTip(event, 'fs85', 152)" onmouseover="showTip(event, 'fs85', 152)" class="t">obj</span>) <span class="o">=</span>
+    <span class="k">match</span> <span onmouseout="hideTip(event, 'fs84', 153)" onmouseover="showTip(event, 'fs84', 153)" class="i">that</span> <span class="k">with</span>                                     
+    | <span class="o">:?</span> <span onmouseout="hideTip(event, 'fs73', 154)" onmouseover="showTip(event, 'fs73', 154)" class="t">Car</span> <span class="k">as</span> <span onmouseout="hideTip(event, 'fs86', 155)" onmouseover="showTip(event, 'fs86', 155)" class="i">that</span>  <span class="k">-&gt;</span> <span onmouseout="hideTip(event, 'fs82', 156)" onmouseover="showTip(event, 'fs82', 156)" class="i">this</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs74', 157)" onmouseover="showTip(event, 'fs74', 157)" class="i">CarID</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs86', 158)" onmouseover="showTip(event, 'fs86', 158)" class="i">that</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs74', 159)" onmouseover="showTip(event, 'fs74', 159)" class="i">CarID</span>  
+    | _               <span class="k">-&gt;</span> <span class="k">false</span>  
+  <span class="k">override</span> <span onmouseout="hideTip(event, 'fs82', 160)" onmouseover="showTip(event, 'fs82', 160)" class="i">this</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs87', 161)" onmouseover="showTip(event, 'fs87', 161)" class="f">GetHashCode</span> () <span class="o">=</span>
+    <span onmouseout="hideTip(event, 'fs88', 162)" onmouseover="showTip(event, 'fs88', 162)" class="f">hash</span> <span onmouseout="hideTip(event, 'fs82', 163)" onmouseover="showTip(event, 'fs82', 163)" class="i">this</span>
+<span class="k">and</span> <span onmouseout="hideTip(event, 'fs89', 164)" onmouseover="showTip(event, 'fs89', 164)" class="t">CarType</span> <span class="o">=</span>
+  | <span onmouseout="hideTip(event, 'fs90', 165)" onmouseover="showTip(event, 'fs90', 165)" class="p">Ford</span> <span class="k">of</span> <span onmouseout="hideTip(event, 'fs90', 166)" onmouseover="showTip(event, 'fs90', 166)" class="t">Ford</span>
+  | <span onmouseout="hideTip(event, 'fs91', 167)" onmouseover="showTip(event, 'fs91', 167)" class="p">BMW</span>  <span class="k">of</span> <span onmouseout="hideTip(event, 'fs91', 168)" onmouseover="showTip(event, 'fs91', 168)" class="t">BMW</span>
+<span class="k">and</span> <span onmouseout="hideTip(event, 'fs92', 169)" onmouseover="showTip(event, 'fs92', 169)" class="t">Ford</span> <span class="o">=</span>
+  | <span onmouseout="hideTip(event, 'fs93', 170)" onmouseover="showTip(event, 'fs93', 170)" class="p">Escape</span> | <span onmouseout="hideTip(event, 'fs94', 171)" onmouseover="showTip(event, 'fs94', 171)" class="p">F150</span>  
+<span class="k">and</span> <span onmouseout="hideTip(event, 'fs95', 172)" onmouseover="showTip(event, 'fs95', 172)" class="t">BMW</span> <span class="o">=</span>
+  | <span onmouseout="hideTip(event, 'fs96', 173)" onmouseover="showTip(event, 'fs96', 173)" class="p">M3</span> | <span onmouseout="hideTip(event, 'fs97', 174)" onmouseover="showTip(event, 'fs97', 174)" class="p">M5</span> 
+<span class="k">and</span> <span onmouseout="hideTip(event, 'fs98', 175)" onmouseover="showTip(event, 'fs98', 175)" class="t">Color</span> <span class="o">=</span>
+  | <span onmouseout="hideTip(event, 'fs99', 176)" onmouseover="showTip(event, 'fs99', 176)" class="p">Red</span> | <span onmouseout="hideTip(event, 'fs100', 177)" onmouseover="showTip(event, 'fs100', 177)" class="p">White</span> | <span onmouseout="hideTip(event, 'fs101', 178)" onmouseover="showTip(event, 'fs101', 178)" class="p">Blue</span>
+<span class="k">and</span> <span onmouseout="hideTip(event, 'fs102', 179)" onmouseover="showTip(event, 'fs102', 179)" class="t">Condition</span> <span class="o">=</span>
+  | <span onmouseout="hideTip(event, 'fs103', 180)" onmouseover="showTip(event, 'fs103', 180)" class="p">Excellent</span> | <span onmouseout="hideTip(event, 'fs104', 181)" onmouseover="showTip(event, 'fs104', 181)" class="p">Good</span> | <span onmouseout="hideTip(event, 'fs105', 182)" onmouseover="showTip(event, 'fs105', 182)" class="p">Average</span> | <span onmouseout="hideTip(event, 'fs106', 183)" onmouseover="showTip(event, 'fs106', 183)" class="p">Poor</span>
+</code></pre></td>
+</tr>
+</table>
+
+<blockquote>
+  <p>Above is the Domain Model of a <code>Car</code>. All of these associated domain types represent an
+Aggregate in Domain Driven Design.</p>
+</blockquote>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l"> 1: </span>
+<span class="l"> 2: </span>
+<span class="l"> 3: </span>
+<span class="l"> 4: </span>
+<span class="l"> 5: </span>
+<span class="l"> 6: </span>
+<span class="l"> 7: </span>
+<span class="l"> 8: </span>
+<span class="l"> 9: </span>
+<span class="l">10: </span>
+<span class="l">11: </span>
+<span class="l">12: </span>
+<span class="l">13: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="k">type</span> <span onmouseout="hideTip(event, 'fs107', 184)" onmouseover="showTip(event, 'fs107', 184)" class="t">CarEvents</span> <span class="o">=</span>
+  | <span onmouseout="hideTip(event, 'fs108', 185)" onmouseover="showTip(event, 'fs108', 185)" class="p">Created</span>          <span class="k">of</span>  <span class="i">carID</span>     <span class="o">:</span><span onmouseout="hideTip(event, 'fs9', 186)" onmouseover="showTip(event, 'fs9', 186)" class="t">Guid</span> 
+                       <span class="o">*</span> <span class="i">year</span>      <span class="o">:</span><span onmouseout="hideTip(event, 'fs12', 187)" onmouseover="showTip(event, 'fs12', 187)" class="t">int</span>
+                       <span class="o">*</span> <span onmouseout="hideTip(event, 'fs89', 188)" onmouseover="showTip(event, 'fs89', 188)" class="t">CarType</span>   
+                       <span class="o">*</span> <span onmouseout="hideTip(event, 'fs98', 189)" onmouseover="showTip(event, 'fs98', 189)" class="t">Color</span>     
+                       <span class="o">*</span> <span class="i">mileage</span>   <span class="o">:</span><span onmouseout="hideTip(event, 'fs12', 190)" onmouseover="showTip(event, 'fs12', 190)" class="t">int</span>
+                       <span class="o">*</span> <span class="i">vin</span>       <span class="o">:</span><span onmouseout="hideTip(event, 'fs14', 191)" onmouseover="showTip(event, 'fs14', 191)" class="t">string</span>
+                       <span class="o">*</span> <span class="i">owner</span>     <span class="o">:</span><span onmouseout="hideTip(event, 'fs9', 192)" onmouseover="showTip(event, 'fs9', 192)" class="t">Guid</span>
+                       <span class="o">*</span> <span class="i">condition</span> <span class="o">:</span><span onmouseout="hideTip(event, 'fs102', 193)" onmouseover="showTip(event, 'fs102', 193)" class="t">Condition</span>
+  | <span onmouseout="hideTip(event, 'fs109', 194)" onmouseover="showTip(event, 'fs109', 194)" class="p">ColorChanged</span>     <span class="k">of</span> <span onmouseout="hideTip(event, 'fs98', 195)" onmouseover="showTip(event, 'fs98', 195)" class="t">Color</span>      
+  | <span onmouseout="hideTip(event, 'fs110', 196)" onmouseover="showTip(event, 'fs110', 196)" class="p">MileageChanged</span>   <span class="k">of</span> <span class="i">mileage</span>    <span class="o">:</span><span onmouseout="hideTip(event, 'fs12', 197)" onmouseover="showTip(event, 'fs12', 197)" class="t">int</span>
+  | <span onmouseout="hideTip(event, 'fs111', 198)" onmouseover="showTip(event, 'fs111', 198)" class="p">ConditionChanged</span> <span class="k">of</span> <span onmouseout="hideTip(event, 'fs102', 199)" onmouseover="showTip(event, 'fs102', 199)" class="t">Condition</span>  
+  | <span onmouseout="hideTip(event, 'fs112', 200)" onmouseover="showTip(event, 'fs112', 200)" class="p">OwnerChanged</span>     <span class="k">of</span> <span class="i">owner</span>      <span class="o">:</span><span onmouseout="hideTip(event, 'fs9', 201)" onmouseover="showTip(event, 'fs9', 201)" class="t">Guid</span>
+</code></pre></td>
+</tr>
+</table>
+
+<blockquote>
+  <p>Events model all possible state changes in a <strong>granular delta</strong> representation; <em>the
+event only contains what has changed.</em> There are a few different approaches to modeling events
+(granular delta's, snapshots, and before-and-after’s); depending on the requirement, you can
+choose accordingly.</p>
+</blockquote>
+
+<hr />
+
+<h3>Part 2: The ReSTful API</h3>
+
+<p>Providing an API to your domain model is how you affect change on it. Below we have two API
+endpoints, a POST and a PUT. For this example, POST will be used to create an instance of
+<code>Car</code> and PUT will be used to update an instance of <code>Car</code>. CQRS API's are typically 
+light weight and have two job's, to fire-and-forget commands and to provide a data
+via query (GET).</p>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l">1: </span>
+<span class="l">2: </span>
+<span class="l">3: </span>
+<span class="l">4: </span>
+<span class="l">5: </span>
+<span class="l">6: </span>
+<span class="l">7: </span>
+<span class="l">8: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="c">// POST: {address}/cars</span>
+<span class="k">let</span> <span onmouseout="hideTip(event, 'fs67', 106)" onmouseover="showTip(event, 'fs67', 106)" class="f">postEndpoint</span> <span onmouseout="hideTip(event, 'fs68', 107)" onmouseover="showTip(event, 'fs68', 107)" class="i">httpRequest</span> <span class="o">=</span>
+  <span class="k">let</span> <span onmouseout="hideTip(event, 'fs69', 108)" onmouseover="showTip(event, 'fs69', 108)" class="i">carID</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs9', 109)" onmouseover="showTip(event, 'fs9', 109)" class="t">Guid</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs27', 110)" onmouseover="showTip(event, 'fs27', 110)" class="f">NewGuid</span>()
+  { <span onmouseout="hideTip(event, 'fs68', 111)" onmouseover="showTip(event, 'fs68', 111)" class="i">httpRequest</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs22', 112)" onmouseover="showTip(event, 'fs22', 112)" class="i">Body</span> <span class="k">with</span> <span class="i">CarID</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs69', 113)" onmouseover="showTip(event, 'fs69', 113)" class="i">carID</span>}
+  <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs5', 114)" onmouseover="showTip(event, 'fs5', 114)" class="p">Create</span> 
+  <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs23', 115)" onmouseover="showTip(event, 'fs23', 115)" class="f">sendToQueue</span>
+  <span class="c">// Return a 200 with the CarID</span>
+  <span onmouseout="hideTip(event, 'fs28', 116)" onmouseover="showTip(event, 'fs28', 116)" class="f">OK</span> (<span onmouseout="hideTip(event, 'fs69', 117)" onmouseover="showTip(event, 'fs69', 117)" class="i">carID</span>)
+</code></pre></td>
+</tr>
+</table>
+
+<blockquote>
+  <p>The POST endpoint parses the JSON body of the request:</p>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l"> 1: </span>
+<span class="l"> 2: </span>
+<span class="l"> 3: </span>
+<span class="l"> 4: </span>
+<span class="l"> 5: </span>
+<span class="l"> 6: </span>
+<span class="l"> 7: </span>
+<span class="l"> 8: </span>
+<span class="l"> 9: </span>
+<span class="l">10: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="javascript">{
+    <span class="s">"year"</span>: 2009,
+    <span class="s">"make"</span>: <span class="s">"BMW"</span>,
+    <span class="s">"model"</span>: <span class="s">"M3"</span>,
+    <span class="s">"color"</span>: <span class="s">"black"</span>,
+    <span class="s">"mileage"</span>: 14320,
+    <span class="s">"vin"</span>: <span class="s">"2G4GM5ER4E9225618"</span>,
+    <span class="s">"condition"</span>: <span class="s">"good"</span>,
+    <span class="s">"owner"</span>: <span class="s">"ad4181f8-c33f-4e81-9d9e-0896188d73f0"</span>
+}
+</code></pre></td></tr></table>
+
+  <p>Then pipes the deserialized <code>Car</code> representation into an instance of a <code>Create</code> command 
+and places it on the command queue.</p>
+</blockquote>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l">1: </span>
+<span class="l">2: </span>
+<span class="l">3: </span>
+<span class="l">4: </span>
+<span class="l">5: </span>
+<span class="l">6: </span>
+<span class="l">7: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="c">// PUT: {address}/cars/{carID}</span>
+<span class="k">let</span> <span onmouseout="hideTip(event, 'fs70', 118)" onmouseover="showTip(event, 'fs70', 118)" class="f">putEndpoint</span> <span onmouseout="hideTip(event, 'fs26', 119)" onmouseover="showTip(event, 'fs26', 119)" class="i">uri</span> <span onmouseout="hideTip(event, 'fs68', 120)" onmouseover="showTip(event, 'fs68', 120)" class="i">httpRequest</span> <span class="o">=</span>
+  <span class="k">let</span> <span onmouseout="hideTip(event, 'fs69', 121)" onmouseover="showTip(event, 'fs69', 121)" class="i">carID</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs25', 122)" onmouseover="showTip(event, 'fs25', 122)" class="f">extractID</span> <span onmouseout="hideTip(event, 'fs26', 123)" onmouseover="showTip(event, 'fs26', 123)" class="i">uri</span>
+  { <span onmouseout="hideTip(event, 'fs68', 124)" onmouseover="showTip(event, 'fs68', 124)" class="i">httpRequest</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs22', 125)" onmouseover="showTip(event, 'fs22', 125)" class="i">Body</span> <span class="k">with</span> <span class="i">CarID</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs69', 126)" onmouseover="showTip(event, 'fs69', 126)" class="i">carID</span> }
+  <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs7', 127)" onmouseover="showTip(event, 'fs7', 127)" class="p">Update</span>
+  <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs23', 128)" onmouseover="showTip(event, 'fs23', 128)" class="f">sendToQueue</span>
+  <span onmouseout="hideTip(event, 'fs30', 129)" onmouseover="showTip(event, 'fs30', 129)" class="f">Accepted</span> ()
+</code></pre></td>
+</tr>
+</table>
+
+<blockquote>
+  <p>The PUT endpoint is very similar to the POST endpoint except it includes the identifier of 
+the <code>Car</code> in the URI as shown above. We simply use the F# <code>with</code> keyword to effectivly update
+the <code>Car</code> representation with the <code>CarID</code>, pipe it into an instance of <code>Update</code> command, 
+and place the command on the command queue.</p>
+</blockquote>
+
+<hr />
+
+<h3>Part 3: The Command &amp; Trigger Patterns</h3>
+
+<p>As shown above, the API publishes commands onto the command queue, which is then consumed by a 
+command handler. Let's take a closer look at the commands:</p>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l"> 1: </span>
+<span class="l"> 2: </span>
+<span class="l"> 3: </span>
+<span class="l"> 4: </span>
+<span class="l"> 5: </span>
+<span class="l"> 6: </span>
+<span class="l"> 7: </span>
+<span class="l"> 8: </span>
+<span class="l"> 9: </span>
+<span class="l">10: </span>
+<span class="l">11: </span>
+<span class="l">12: </span>
+<span class="l">13: </span>
+<span class="l">14: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="k">type</span> <span onmouseout="hideTip(event, 'fs4', 4)" onmouseover="showTip(event, 'fs4', 4)" class="t">CarCommands</span> <span class="o">=</span>
+  | <span onmouseout="hideTip(event, 'fs5', 5)" onmouseover="showTip(event, 'fs5', 5)" class="p">Create</span> <span class="k">of</span> <span onmouseout="hideTip(event, 'fs6', 6)" onmouseover="showTip(event, 'fs6', 6)" class="t">CarRepresentation</span>
+  | <span onmouseout="hideTip(event, 'fs7', 7)" onmouseover="showTip(event, 'fs7', 7)" class="p">Update</span> <span class="k">of</span> <span onmouseout="hideTip(event, 'fs6', 8)" onmouseover="showTip(event, 'fs6', 8)" class="t">CarRepresentation</span>
+  | <span onmouseout="hideTip(event, 'fs8', 9)" onmouseover="showTip(event, 'fs8', 9)" class="p">Delete</span> <span class="k">of</span> <span class="i">carID</span><span class="o">:</span><span onmouseout="hideTip(event, 'fs9', 10)" onmouseover="showTip(event, 'fs9', 10)" class="t">Guid</span>
+<span class="k">and</span> <span onmouseout="hideTip(event, 'fs6', 11)" onmouseover="showTip(event, 'fs6', 11)" class="t">CarRepresentation</span> <span class="o">=</span> 
+  { <span onmouseout="hideTip(event, 'fs10', 12)" onmouseover="showTip(event, 'fs10', 12)" class="i">CarID</span>     <span class="o">:</span> <span onmouseout="hideTip(event, 'fs9', 13)" onmouseover="showTip(event, 'fs9', 13)" class="t">Guid</span>
+    <span onmouseout="hideTip(event, 'fs11', 14)" onmouseover="showTip(event, 'fs11', 14)" class="i">Year</span>      <span class="o">:</span> <span onmouseout="hideTip(event, 'fs12', 15)" onmouseover="showTip(event, 'fs12', 15)" class="t">int</span>
+    <span onmouseout="hideTip(event, 'fs13', 16)" onmouseover="showTip(event, 'fs13', 16)" class="i">Make</span>      <span class="o">:</span> <span onmouseout="hideTip(event, 'fs14', 17)" onmouseover="showTip(event, 'fs14', 17)" class="t">string</span>
+    <span onmouseout="hideTip(event, 'fs15', 18)" onmouseover="showTip(event, 'fs15', 18)" class="i">Model</span>     <span class="o">:</span> <span onmouseout="hideTip(event, 'fs14', 19)" onmouseover="showTip(event, 'fs14', 19)" class="t">string</span>
+    <span onmouseout="hideTip(event, 'fs16', 20)" onmouseover="showTip(event, 'fs16', 20)" class="i">Color</span>     <span class="o">:</span> <span onmouseout="hideTip(event, 'fs14', 21)" onmouseover="showTip(event, 'fs14', 21)" class="t">string</span>
+    <span onmouseout="hideTip(event, 'fs17', 22)" onmouseover="showTip(event, 'fs17', 22)" class="i">Mileage</span>   <span class="o">:</span> <span onmouseout="hideTip(event, 'fs12', 23)" onmouseover="showTip(event, 'fs12', 23)" class="t">int</span>
+    <span onmouseout="hideTip(event, 'fs18', 24)" onmouseover="showTip(event, 'fs18', 24)" class="i">VIN</span>       <span class="o">:</span> <span onmouseout="hideTip(event, 'fs14', 25)" onmouseover="showTip(event, 'fs14', 25)" class="t">string</span>
+    <span onmouseout="hideTip(event, 'fs19', 26)" onmouseover="showTip(event, 'fs19', 26)" class="i">Condition</span> <span class="o">:</span> <span onmouseout="hideTip(event, 'fs14', 27)" onmouseover="showTip(event, 'fs14', 27)" class="t">string</span>
+    <span onmouseout="hideTip(event, 'fs20', 28)" onmouseover="showTip(event, 'fs20', 28)" class="i">Owner</span>     <span class="o">:</span> <span onmouseout="hideTip(event, 'fs9', 29)" onmouseover="showTip(event, 'fs9', 29)" class="t">Guid</span> }
+</code></pre></td>
+</tr>
+</table>
+
+<blockquote>
+  <p>Notice the only responsiblity of the command is to encapsulate the <code>Car</code>'s API representation, 
+<code>CarRepresentation</code>.</p>
+</blockquote>
+
+<p>Now let's examine how the command is handled. The <code>commandHandler</code> is responsible for
+consuming the command, validating it, and working with the Aggregate Root. The root 
+may return an event which is then persisted and broadcasted.</p>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l">1: </span>
+<span class="l">2: </span>
+<span class="l">3: </span>
+<span class="l">4: </span>
+<span class="l">5: </span>
+<span class="l">6: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="k">let</span> <span onmouseout="hideTip(event, 'fs231', 646)" onmouseover="showTip(event, 'fs231', 646)" class="f">commandHandler</span> <span onmouseout="hideTip(event, 'fs210', 647)" onmouseover="showTip(event, 'fs210', 647)" class="i">command</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs148', 648)" onmouseover="showTip(event, 'fs148', 648)" class="i">choice</span> {
+  <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs205', 649)" onmouseover="showTip(event, 'fs205', 649)" class="i">currentState</span>,<span onmouseout="hideTip(event, 'fs232', 650)" onmouseover="showTip(event, 'fs232', 650)" class="i">triggers</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs233', 651)" onmouseover="showTip(event, 'fs233', 651)" class="t">TriggerBuilder</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs209', 652)" onmouseover="showTip(event, 'fs209', 652)" class="f">map</span> <span onmouseout="hideTip(event, 'fs210', 653)" onmouseover="showTip(event, 'fs210', 653)" class="i">command</span>
+  <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs234', 654)" onmouseover="showTip(event, 'fs234', 654)" class="i">finalState</span>  ,<span onmouseout="hideTip(event, 'fs235', 655)" onmouseover="showTip(event, 'fs235', 655)" class="i">events</span>   <span class="o">=</span> <span onmouseout="hideTip(event, 'fs232', 656)" onmouseover="showTip(event, 'fs232', 656)" class="i">triggers</span> <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs212', 657)" onmouseover="showTip(event, 'fs212', 657)" class="f">execute</span> <span onmouseout="hideTip(event, 'fs152', 658)" onmouseover="showTip(event, 'fs152', 658)" class="i">root</span> <span onmouseout="hideTip(event, 'fs205', 659)" onmouseover="showTip(event, 'fs205', 659)" class="i">currentState</span>
+  <span class="k">do!</span> <span onmouseout="hideTip(event, 'fs235', 660)" onmouseover="showTip(event, 'fs235', 660)" class="i">events</span> <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs206', 661)" onmouseover="showTip(event, 'fs206', 661)" class="t">EventStore</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs62', 662)" onmouseover="showTip(event, 'fs62', 662)" class="f">saveEvents</span> <span onmouseout="hideTip(event, 'fs234', 663)" onmouseover="showTip(event, 'fs234', 663)" class="i">finalState</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs74', 664)" onmouseover="showTip(event, 'fs74', 664)" class="i">CarID</span>
+  <span class="k">do!</span> <span onmouseout="hideTip(event, 'fs66', 665)" onmouseover="showTip(event, 'fs66', 665)" class="f">broadcast</span> <span onmouseout="hideTip(event, 'fs235', 666)" onmouseover="showTip(event, 'fs235', 666)" class="i">events</span>
+  <span class="k">return</span> ()}
+</code></pre></td>
+</tr>
+</table>
+
+<p>The <code>TriggerBuilder.map</code> function takes an API command, data-type validates it, and maps it
+into domain trigger(s). Data-type validation is simply confirming that <code>Guid</code>'s are not empty and <code>strings</code> map
+to their proper <code>enum</code>'s, etc.</p>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l"> 1: </span>
+<span class="l"> 2: </span>
+<span class="l"> 3: </span>
+<span class="l"> 4: </span>
+<span class="l"> 5: </span>
+<span class="l"> 6: </span>
+<span class="l"> 7: </span>
+<span class="l"> 8: </span>
+<span class="l"> 9: </span>
+<span class="l">10: </span>
+<span class="l">11: </span>
+<span class="l">12: </span>
+<span class="l">13: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="k">type</span> <span onmouseout="hideTip(event, 'fs113', 202)" onmouseover="showTip(event, 'fs113', 202)" class="t">CarTriggers</span> <span class="o">=</span>
+  | <span onmouseout="hideTip(event, 'fs114', 203)" onmouseover="showTip(event, 'fs114', 203)" class="p">Create</span>          <span class="k">of</span>  <span class="i">carID</span>     <span class="o">:</span><span onmouseout="hideTip(event, 'fs9', 204)" onmouseover="showTip(event, 'fs9', 204)" class="t">Guid</span>
+                      <span class="o">*</span> <span class="i">year</span>      <span class="o">:</span><span onmouseout="hideTip(event, 'fs12', 205)" onmouseover="showTip(event, 'fs12', 205)" class="t">int</span>
+                      <span class="o">*</span> <span onmouseout="hideTip(event, 'fs89', 206)" onmouseover="showTip(event, 'fs89', 206)" class="t">CarType</span>   
+                      <span class="o">*</span> <span onmouseout="hideTip(event, 'fs98', 207)" onmouseover="showTip(event, 'fs98', 207)" class="t">Color</span>     
+                      <span class="o">*</span> <span class="i">mileage</span>   <span class="o">:</span><span onmouseout="hideTip(event, 'fs12', 208)" onmouseover="showTip(event, 'fs12', 208)" class="t">int</span>
+                      <span class="o">*</span> <span class="i">vin</span>       <span class="o">:</span><span onmouseout="hideTip(event, 'fs14', 209)" onmouseover="showTip(event, 'fs14', 209)" class="t">string</span>
+                      <span class="o">*</span> <span class="i">owner</span>     <span class="o">:</span><span onmouseout="hideTip(event, 'fs9', 210)" onmouseover="showTip(event, 'fs9', 210)" class="t">Guid</span>
+                      <span class="o">*</span> <span class="i">condition</span> <span class="o">:</span><span onmouseout="hideTip(event, 'fs102', 211)" onmouseover="showTip(event, 'fs102', 211)" class="t">Condition</span>
+  | <span onmouseout="hideTip(event, 'fs115', 212)" onmouseover="showTip(event, 'fs115', 212)" class="p">ChangeColor</span>     <span class="k">of</span> <span onmouseout="hideTip(event, 'fs98', 213)" onmouseover="showTip(event, 'fs98', 213)" class="t">Color</span>      
+  | <span onmouseout="hideTip(event, 'fs116', 214)" onmouseover="showTip(event, 'fs116', 214)" class="p">UpdateMileage</span>   <span class="k">of</span> <span class="i">mileage</span>    <span class="o">:</span><span onmouseout="hideTip(event, 'fs12', 215)" onmouseover="showTip(event, 'fs12', 215)" class="t">int</span>
+  | <span onmouseout="hideTip(event, 'fs117', 216)" onmouseover="showTip(event, 'fs117', 216)" class="p">UpdateCondition</span> <span class="k">of</span> <span onmouseout="hideTip(event, 'fs102', 217)" onmouseover="showTip(event, 'fs102', 217)" class="t">Condition</span>  
+  | <span onmouseout="hideTip(event, 'fs118', 218)" onmouseover="showTip(event, 'fs118', 218)" class="p">ChangeOwner</span>     <span class="k">of</span> <span class="i">owner</span>      <span class="o">:</span><span onmouseout="hideTip(event, 'fs9', 219)" onmouseover="showTip(event, 'fs9', 219)" class="t">Guid</span>
+</code></pre></td>
+</tr>
+</table>
+
+<blockquote>
+  <p><code>CarTriggers</code> Trigger domain type provides explicit actions you can take against the Aggregate.
+<code>CarCommands</code> from the API have implicit intent, as you're just PUT'ing the future state of the <code>Car</code> to the
+API, whereas <code>CarTriggers</code> have explicit intent, and provide a precise modeling mechanism for 
+complex state changes.</p>
+</blockquote>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l">1: </span>
+<span class="l">2: </span>
+<span class="l">3: </span>
+<span class="l">4: </span>
+<span class="l">5: </span>
+<span class="l">6: </span>
+<span class="l">7: </span>
+<span class="l">8: </span>
+<span class="l">9: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="k">module</span> <span class="t">TriggerBuilder</span> <span class="o">=</span>
+  <span class="c">// ...</span>
+  <span class="c">// Code commented out for readability, see examples below</span>
+  <span class="c">// ...</span>
+  <span class="k">let</span> <span onmouseout="hideTip(event, 'fs209', 570)" onmouseover="showTip(event, 'fs209', 570)" class="f">map</span> <span onmouseout="hideTip(event, 'fs210', 571)" onmouseover="showTip(event, 'fs210', 571)" class="i">command</span> <span class="o">=</span> 
+    <span class="k">match</span> <span onmouseout="hideTip(event, 'fs210', 572)" onmouseover="showTip(event, 'fs210', 572)" class="i">command</span> <span class="k">with</span>
+    | <span onmouseout="hideTip(event, 'fs4', 573)" onmouseover="showTip(event, 'fs4', 573)" class="t">CarCommands</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs5', 574)" onmouseover="showTip(event, 'fs5', 574)" class="p">Create</span> <span onmouseout="hideTip(event, 'fs211', 575)" onmouseover="showTip(event, 'fs211', 575)" class="i">car</span>   <span class="k">-&gt;</span> <span onmouseout="hideTip(event, 'fs169', 576)" onmouseover="showTip(event, 'fs169', 576)" class="f">mapCreate</span> <span onmouseout="hideTip(event, 'fs211', 577)" onmouseover="showTip(event, 'fs211', 577)" class="i">car</span>
+    | <span onmouseout="hideTip(event, 'fs4', 578)" onmouseover="showTip(event, 'fs4', 578)" class="t">CarCommands</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs7', 579)" onmouseover="showTip(event, 'fs7', 579)" class="p">Update</span> <span onmouseout="hideTip(event, 'fs211', 580)" onmouseover="showTip(event, 'fs211', 580)" class="i">car</span>   <span class="k">-&gt;</span> <span onmouseout="hideTip(event, 'fs203', 581)" onmouseover="showTip(event, 'fs203', 581)" class="f">mapUpdate</span> <span onmouseout="hideTip(event, 'fs211', 582)" onmouseover="showTip(event, 'fs211', 582)" class="i">car</span>
+    | <span onmouseout="hideTip(event, 'fs4', 583)" onmouseover="showTip(event, 'fs4', 583)" class="t">CarCommands</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs8', 584)" onmouseover="showTip(event, 'fs8', 584)" class="p">Delete</span> <span onmouseout="hideTip(event, 'fs69', 585)" onmouseover="showTip(event, 'fs69', 585)" class="i">carID</span> <span class="k">-&gt;</span> <span onmouseout="hideTip(event, 'fs207', 586)" onmouseover="showTip(event, 'fs207', 586)" class="f">mapDelete</span> <span onmouseout="hideTip(event, 'fs69', 587)" onmouseover="showTip(event, 'fs69', 587)" class="i">carID</span>
+</code></pre></td>
+</tr>
+</table>
+
+<blockquote>
+  <p>The <code>TriggerBuilder</code> matches on the <code>CarCommands</code> type and provides the <code>CarRepresentation</code> from
+the command to the mapping function (<code>mapCreate</code>, <code>mapUpdate</code>, or <code>mapDelete</code>).</p>
+</blockquote>
+
+<p>The responsibility of the trigger mapping functions (<code>mapCreate</code>, <code>mapUpdate</code>, or <code>mapDelete</code>), are to
+1) data-type validate the representation 2) determine which domain triggers to return. The data-type
+validation is quite trivial:</p>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l"> 1: </span>
+<span class="l"> 2: </span>
+<span class="l"> 3: </span>
+<span class="l"> 4: </span>
+<span class="l"> 5: </span>
+<span class="l"> 6: </span>
+<span class="l"> 7: </span>
+<span class="l"> 8: </span>
+<span class="l"> 9: </span>
+<span class="l">10: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="k">let</span> <span onmouseout="hideTip(event, 'fs168', 420)" onmouseover="showTip(event, 'fs168', 420)" class="f">validateRepresentation</span> (<span onmouseout="hideTip(event, 'fs163', 421)" onmouseover="showTip(event, 'fs163', 421)" class="i">payload</span><span class="o">:</span><span onmouseout="hideTip(event, 'fs6', 422)" onmouseover="showTip(event, 'fs6', 422)" class="t">CarRepresentation</span>) <span class="o">=</span> <span onmouseout="hideTip(event, 'fs148', 423)" onmouseover="showTip(event, 'fs148', 423)" class="i">choice</span> {
+  <span class="c">// Simple type validation &amp; mapping -&gt; No domain validation here!</span>
+  <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs69', 424)" onmouseover="showTip(event, 'fs69', 424)" class="i">carID</span>     <span class="o">=</span> <span onmouseout="hideTip(event, 'fs127', 425)" onmouseover="showTip(event, 'fs127', 425)" class="f">validateID</span> <span onmouseout="hideTip(event, 'fs163', 426)" onmouseover="showTip(event, 'fs163', 426)" class="i">payload</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs10', 427)" onmouseover="showTip(event, 'fs10', 427)" class="i">CarID</span>
+  <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs142', 428)" onmouseover="showTip(event, 'fs142', 428)" class="i">carType</span>   <span class="o">=</span> <span onmouseout="hideTip(event, 'fs162', 429)" onmouseover="showTip(event, 'fs162', 429)" class="f">mapCarType</span> <span onmouseout="hideTip(event, 'fs163', 430)" onmouseover="showTip(event, 'fs163', 430)" class="i">payload</span>
+  <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs143', 431)" onmouseover="showTip(event, 'fs143', 431)" class="i">color</span>     <span class="o">=</span> <span onmouseout="hideTip(event, 'fs153', 432)" onmouseover="showTip(event, 'fs153', 432)" class="f">mapEnum</span><span class="o">&lt;</span><span onmouseout="hideTip(event, 'fs98', 433)" onmouseover="showTip(event, 'fs98', 433)" class="t">Color</span><span class="o">&gt;</span> <span onmouseout="hideTip(event, 'fs163', 434)" onmouseover="showTip(event, 'fs163', 434)" class="i">payload</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs16', 435)" onmouseover="showTip(event, 'fs16', 435)" class="i">Color</span>
+  <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs145', 436)" onmouseover="showTip(event, 'fs145', 436)" class="i">vin</span>       <span class="o">=</span> <span onmouseout="hideTip(event, 'fs160', 437)" onmouseover="showTip(event, 'fs160', 437)" class="f">isValidString</span> <span onmouseout="hideTip(event, 'fs163', 438)" onmouseover="showTip(event, 'fs163', 438)" class="i">payload</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs18', 439)" onmouseover="showTip(event, 'fs18', 439)" class="i">VIN</span>
+  <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs147', 440)" onmouseover="showTip(event, 'fs147', 440)" class="i">condition</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs153', 441)" onmouseover="showTip(event, 'fs153', 441)" class="f">mapEnum</span><span class="o">&lt;</span><span onmouseout="hideTip(event, 'fs102', 442)" onmouseover="showTip(event, 'fs102', 442)" class="t">Condition</span><span class="o">&gt;</span> <span onmouseout="hideTip(event, 'fs163', 443)" onmouseover="showTip(event, 'fs163', 443)" class="i">payload</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs19', 444)" onmouseover="showTip(event, 'fs19', 444)" class="i">Condition</span>
+  <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs149', 445)" onmouseover="showTip(event, 'fs149', 445)" class="i">ownerID</span>   <span class="o">=</span> <span onmouseout="hideTip(event, 'fs127', 446)" onmouseover="showTip(event, 'fs127', 446)" class="f">validateID</span> <span onmouseout="hideTip(event, 'fs163', 447)" onmouseover="showTip(event, 'fs163', 447)" class="i">payload</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs20', 448)" onmouseover="showTip(event, 'fs20', 448)" class="i">Owner</span>
+  <span class="c">// Return all the mapped &amp; validated types</span>
+  <span class="k">return</span> <span onmouseout="hideTip(event, 'fs69', 449)" onmouseover="showTip(event, 'fs69', 449)" class="i">carID</span>,<span onmouseout="hideTip(event, 'fs163', 450)" onmouseover="showTip(event, 'fs163', 450)" class="i">payload</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs11', 451)" onmouseover="showTip(event, 'fs11', 451)" class="i">Year</span>,<span onmouseout="hideTip(event, 'fs142', 452)" onmouseover="showTip(event, 'fs142', 452)" class="i">carType</span>,<span onmouseout="hideTip(event, 'fs143', 453)" onmouseover="showTip(event, 'fs143', 453)" class="i">color</span>,<span onmouseout="hideTip(event, 'fs163', 454)" onmouseover="showTip(event, 'fs163', 454)" class="i">payload</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs17', 455)" onmouseover="showTip(event, 'fs17', 455)" class="i">Mileage</span>,<span onmouseout="hideTip(event, 'fs145', 456)" onmouseover="showTip(event, 'fs145', 456)" class="i">vin</span>,<span onmouseout="hideTip(event, 'fs149', 457)" onmouseover="showTip(event, 'fs149', 457)" class="i">ownerID</span>,<span onmouseout="hideTip(event, 'fs147', 458)" onmouseover="showTip(event, 'fs147', 458)" class="i">condition</span> }
+</code></pre></td>
+</tr>
+</table>
+
+<blockquote>
+  <p>Simple type validation and mapping of primitives to value types. <em>("Value Types" in the context of Domain
+Driven Design)</em></p>
+</blockquote>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l">1: </span>
+<span class="l">2: </span>
+<span class="l">3: </span>
+<span class="l">4: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="c">// Validate &amp; map representation into domain types, and create the trigger</span>
+<span class="k">let</span> <span onmouseout="hideTip(event, 'fs169', 459)" onmouseover="showTip(event, 'fs169', 459)" class="f">mapCreate</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs168', 460)" onmouseover="showTip(event, 'fs168', 460)" class="f">validateRepresentation</span> 
+                <span class="o">&gt;</span><span class="o">&gt;</span> <span onmouseout="hideTip(event, 'fs59', 461)" onmouseover="showTip(event, 'fs59', 461)" class="t">Choice</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs170', 462)" onmouseover="showTip(event, 'fs170', 462)" class="f">map</span> (<span onmouseout="hideTip(event, 'fs114', 463)" onmouseover="showTip(event, 'fs114', 463)" class="p">Create</span> <span class="o">&gt;</span><span class="o">&gt;</span> <span onmouseout="hideTip(event, 'fs171', 464)" onmouseover="showTip(event, 'fs171', 464)" class="t">List</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs172', 465)" onmouseover="showTip(event, 'fs172', 465)" class="f">singleton</span>) 
+                <span class="o">&gt;</span><span class="o">&gt;</span> <span onmouseout="hideTip(event, 'fs59', 466)" onmouseover="showTip(event, 'fs59', 466)" class="t">Choice</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs170', 467)" onmouseover="showTip(event, 'fs170', 467)" class="f">map</span> (<span class="k">fun</span> <span onmouseout="hideTip(event, 'fs173', 468)" onmouseover="showTip(event, 'fs173', 468)" class="i">e</span> <span class="k">-&gt;</span> <span onmouseout="hideTip(event, 'fs152', 469)" onmouseover="showTip(event, 'fs152', 469)" class="i">root</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs174', 470)" onmouseover="showTip(event, 'fs174', 470)" class="i">Zero</span> (),<span onmouseout="hideTip(event, 'fs173', 471)" onmouseover="showTip(event, 'fs173', 471)" class="i">e</span>)
+</code></pre></td>
+</tr>
+</table>
+
+<p><code>mapCreate</code> validates &amp; maps the API representation <code>CarRepresentation</code>, then makes a <code>Create</code> trigger, finally
+mapping into a <code>Tuple</code> with the zero state of the Aggregate Root (see Part 4). The trigger builder will 
+return this <code>('State * 'Triggers list)</code> tuple back to the Command Handler, where it is then fired against
+the Aggregate Root; thus producing domain events.</p>
+
+<p>Finally the part you've been waiting for. How does the system magically figure out what state been changed from the
+PUT API representation? Truth is, it's not that magical.</p>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l">1: </span>
+<span class="l">2: </span>
+<span class="l">3: </span>
+<span class="l">4: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="k">let</span> <span onmouseout="hideTip(event, 'fs203', 545)" onmouseover="showTip(event, 'fs203', 545)" class="f">mapUpdate</span> <span onmouseout="hideTip(event, 'fs204', 546)" onmouseover="showTip(event, 'fs204', 546)" class="i">representation</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs148', 547)" onmouseover="showTip(event, 'fs148', 547)" class="i">choice</span> {
+  <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs69', 548)" onmouseover="showTip(event, 'fs69', 548)" class="i">carID</span>,_,_,<span onmouseout="hideTip(event, 'fs143', 549)" onmouseover="showTip(event, 'fs143', 549)" class="i">color</span>,<span onmouseout="hideTip(event, 'fs144', 550)" onmouseover="showTip(event, 'fs144', 550)" class="i">mileage</span>,_,<span onmouseout="hideTip(event, 'fs146', 551)" onmouseover="showTip(event, 'fs146', 551)" class="i">owner</span>,<span onmouseout="hideTip(event, 'fs147', 552)" onmouseover="showTip(event, 'fs147', 552)" class="i">condition</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs168', 553)" onmouseover="showTip(event, 'fs168', 553)" class="f">validateRepresentation</span> <span onmouseout="hideTip(event, 'fs204', 554)" onmouseover="showTip(event, 'fs204', 554)" class="i">representation</span>
+  <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs205', 555)" onmouseover="showTip(event, 'fs205', 555)" class="i">currentState</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs206', 556)" onmouseover="showTip(event, 'fs206', 556)" class="t">EventStore</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs57', 557)" onmouseover="showTip(event, 'fs57', 557)" class="f">rehydrate</span><span class="o">&lt;</span><span onmouseout="hideTip(event, 'fs73', 558)" onmouseover="showTip(event, 'fs73', 558)" class="t">Car</span><span class="o">&gt;</span> <span onmouseout="hideTip(event, 'fs69', 559)" onmouseover="showTip(event, 'fs69', 559)" class="i">carID</span>
+  <span class="k">return!</span> <span onmouseout="hideTip(event, 'fs189', 560)" onmouseover="showTip(event, 'fs189', 560)" class="f">compare</span> <span onmouseout="hideTip(event, 'fs205', 561)" onmouseover="showTip(event, 'fs205', 561)" class="i">currentState</span> (<span onmouseout="hideTip(event, 'fs143', 562)" onmouseover="showTip(event, 'fs143', 562)" class="i">color</span>,<span onmouseout="hideTip(event, 'fs144', 563)" onmouseover="showTip(event, 'fs144', 563)" class="i">mileage</span>,<span onmouseout="hideTip(event, 'fs146', 564)" onmouseover="showTip(event, 'fs146', 564)" class="i">owner</span>,<span onmouseout="hideTip(event, 'fs147', 565)" onmouseover="showTip(event, 'fs147', 565)" class="i">condition</span>) }
+</code></pre></td>
+</tr>
+</table>
+
+<blockquote>
+  <p><code>mapUpdate</code> data-type validates the <code>CarRepresentation</code> the same way the <code>mapCreate</code> function does. The <code>compare</code> function
+is where the analysis happens.</p>
+</blockquote>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l"> 1: </span>
+<span class="l"> 2: </span>
+<span class="l"> 3: </span>
+<span class="l"> 4: </span>
+<span class="l"> 5: </span>
+<span class="l"> 6: </span>
+<span class="l"> 7: </span>
+<span class="l"> 8: </span>
+<span class="l"> 9: </span>
+<span class="l">10: </span>
+<span class="l">11: </span>
+<span class="l">12: </span>
+<span class="l">13: </span>
+<span class="l">14: </span>
+<span class="l">15: </span>
+<span class="l">16: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="k">let</span> <span onmouseout="hideTip(event, 'fs189', 508)" onmouseover="showTip(event, 'fs189', 508)" class="f">compare</span> <span onmouseout="hideTip(event, 'fs190', 509)" onmouseover="showTip(event, 'fs190', 509)" class="i">current</span> <span onmouseout="hideTip(event, 'fs191', 510)" onmouseover="showTip(event, 'fs191', 510)" class="i">proposed</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs148', 511)" onmouseover="showTip(event, 'fs148', 511)" class="i">choice</span> {
+  <span class="c">// Figure out what has changed!</span>
+  <span class="k">let</span> <span onmouseout="hideTip(event, 'fs192', 512)" onmouseover="showTip(event, 'fs192', 512)" class="i">proposedColor</span>,<span onmouseout="hideTip(event, 'fs193', 513)" onmouseover="showTip(event, 'fs193', 513)" class="i">proposedMileage</span>,<span onmouseout="hideTip(event, 'fs194', 514)" onmouseover="showTip(event, 'fs194', 514)" class="i">proposedOwner</span>,<span onmouseout="hideTip(event, 'fs195', 515)" onmouseover="showTip(event, 'fs195', 515)" class="i">proposedCondition</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs191', 516)" onmouseover="showTip(event, 'fs191', 516)" class="i">proposed</span>
+  <span class="k">let</span> <span onmouseout="hideTip(event, 'fs196', 517)" onmouseover="showTip(event, 'fs196', 517)" class="i">changeColorTrigger</span>     <span class="o">=</span> <span onmouseout="hideTip(event, 'fs192', 518)" onmouseover="showTip(event, 'fs192', 518)" class="i">proposedColor</span>     <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs175', 519)" onmouseover="showTip(event, 'fs175', 519)" class="f">evalColor</span>     <span onmouseout="hideTip(event, 'fs190', 520)" onmouseover="showTip(event, 'fs190', 520)" class="i">current</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs197', 521)" onmouseover="showTip(event, 'fs197', 521)" class="i">Color</span>
+  <span class="k">let</span> <span onmouseout="hideTip(event, 'fs198', 522)" onmouseover="showTip(event, 'fs198', 522)" class="i">updateMileageTrigger</span>   <span class="o">=</span> <span onmouseout="hideTip(event, 'fs193', 523)" onmouseover="showTip(event, 'fs193', 523)" class="i">proposedMileage</span>   <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs180', 524)" onmouseover="showTip(event, 'fs180', 524)" class="f">evalMileage</span>   <span onmouseout="hideTip(event, 'fs190', 525)" onmouseover="showTip(event, 'fs190', 525)" class="i">current</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs78', 526)" onmouseover="showTip(event, 'fs78', 526)" class="i">Mileage</span>
+  <span class="k">let</span> <span onmouseout="hideTip(event, 'fs199', 527)" onmouseover="showTip(event, 'fs199', 527)" class="i">changeOwnerTrigger</span>     <span class="o">=</span> <span onmouseout="hideTip(event, 'fs194', 528)" onmouseover="showTip(event, 'fs194', 528)" class="i">proposedOwner</span>     <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs183', 529)" onmouseover="showTip(event, 'fs183', 529)" class="f">evalOwner</span>     <span onmouseout="hideTip(event, 'fs190', 530)" onmouseover="showTip(event, 'fs190', 530)" class="i">current</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs81', 531)" onmouseover="showTip(event, 'fs81', 531)" class="i">Owner</span>
+  <span class="k">let</span> <span onmouseout="hideTip(event, 'fs200', 532)" onmouseover="showTip(event, 'fs200', 532)" class="i">updateConditionTrigger</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs195', 533)" onmouseover="showTip(event, 'fs195', 533)" class="i">proposedCondition</span> <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs186', 534)" onmouseover="showTip(event, 'fs186', 534)" class="f">evalCondition</span> <span onmouseout="hideTip(event, 'fs190', 535)" onmouseover="showTip(event, 'fs190', 535)" class="i">current</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs201', 536)" onmouseover="showTip(event, 'fs201', 536)" class="i">Condition</span>
+  <span class="c">// Controls the order in which the triggers fire to the aggregate</span>
+  <span class="k">return</span>
+    <span onmouseout="hideTip(event, 'fs190', 537)" onmouseover="showTip(event, 'fs190', 537)" class="i">current</span>,
+    [<span onmouseout="hideTip(event, 'fs196', 538)" onmouseover="showTip(event, 'fs196', 538)" class="i">changeColorTrigger</span>
+     <span onmouseout="hideTip(event, 'fs198', 539)" onmouseover="showTip(event, 'fs198', 539)" class="i">updateMileageTrigger</span>
+     <span onmouseout="hideTip(event, 'fs199', 540)" onmouseover="showTip(event, 'fs199', 540)" class="i">changeOwnerTrigger</span>
+     <span onmouseout="hideTip(event, 'fs200', 541)" onmouseover="showTip(event, 'fs200', 541)" class="i">updateConditionTrigger</span>]
+    <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs171', 542)" onmouseover="showTip(event, 'fs171', 542)" class="t">List</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs202', 543)" onmouseover="showTip(event, 'fs202', 543)" class="f">choose</span> <span onmouseout="hideTip(event, 'fs64', 544)" onmouseover="showTip(event, 'fs64', 544)" class="f">some</span> }
+     
+</code></pre></td>
+</tr>
+</table>
+
+<blockquote>
+  <p>Each <code>eval</code> function evaluates the current and proposed state, returning a <code>Trigger option</code>.</p>
+</blockquote>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l">1: </span>
+<span class="l">2: </span>
+<span class="l">3: </span>
+<span class="l">4: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="k">let</span> <span onmouseout="hideTip(event, 'fs175', 472)" onmouseover="showTip(event, 'fs175', 472)" class="f">evalColor</span> <span onmouseout="hideTip(event, 'fs176', 473)" onmouseover="showTip(event, 'fs176', 473)" class="i">current</span> <span onmouseout="hideTip(event, 'fs177', 474)" onmouseover="showTip(event, 'fs177', 474)" class="i">proposed</span> <span class="o">=</span>
+  <span class="k">if</span> <span onmouseout="hideTip(event, 'fs176', 475)" onmouseover="showTip(event, 'fs176', 475)" class="i">current</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs177', 476)" onmouseover="showTip(event, 'fs177', 476)" class="i">proposed</span>
+    <span class="k">then</span> <span onmouseout="hideTip(event, 'fs178', 477)" onmouseover="showTip(event, 'fs178', 477)" class="p">None</span>
+    <span class="k">else</span> <span onmouseout="hideTip(event, 'fs179', 478)" onmouseover="showTip(event, 'fs179', 478)" class="p">Some</span> <span class="o">&lt;|</span> <span onmouseout="hideTip(event, 'fs115', 479)" onmouseover="showTip(event, 'fs115', 479)" class="p">ChangeColor</span> <span onmouseout="hideTip(event, 'fs177', 480)" onmouseover="showTip(event, 'fs177', 480)" class="i">proposed</span>
+</code></pre></td>
+</tr>
+</table>
+
+<blockquote>
+  <p><code>evalColor</code> evaluates current and proposed color, returning a <code>ChangeColor option</code> (Trigger).</p>
+</blockquote>
+
+<p>To summarize the Command Handler, it consists of the following components:<br />
+1. <strong>Trigger Builder</strong><br />
+-<em>Maps "implicit intent" API Commands to "explicit intent" Domain Triggers.</em><br />
+2. <strong>Execution</strong><br />
+-<em>Involves rehydration of the Aggregate from the event store and firing of the Triggers against the Aggregate Root, which result in Domain Events.</em><br />
+3. <strong>Persistence &amp; Broadcasting</strong><br />
+-<em>Saving the Domain Events to durable storage (Event Store) and broadcasting said events to interested parties.</em></p>
+
+<hr />
+
+<h3>Part 4: CQRS Aggregate Root</h3>
+
+<p>The Domain Driven Design Aggregate Root is the "chosen" entity that is responsible for consistency
+within the aggregates type's and acts as a liason to the outside world. In this example the Aggregate
+Root was a <code>Car</code>. Consider the abstract notion of the DDD Aggregate Root with the following concrete
+type definition of a CQRS Aggregate Root:</p>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l">1: </span>
+<span class="l">2: </span>
+<span class="l">3: </span>
+<span class="l">4: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="k">type</span> <span onmouseout="hideTip(event, 'fs121', 222)" onmouseover="showTip(event, 'fs121', 222)" class="t">AggregateRoot</span><span class="o">&lt;</span><span class="o">&#39;</span><span onmouseout="hideTip(event, 'fs122', 223)" onmouseover="showTip(event, 'fs122', 223)" class="i">state</span>,<span class="o">&#39;</span><span class="i">event</span>,<span class="o">&#39;</span><span class="i">trigger</span><span class="o">&gt;</span> <span class="o">=</span>
+  { <span onmouseout="hideTip(event, 'fs123', 224)" onmouseover="showTip(event, 'fs123', 224)" class="i">Zero</span>  <span class="o">:</span>  <span onmouseout="hideTip(event, 'fs124', 225)" onmouseover="showTip(event, 'fs124', 225)" class="t">unit</span>  <span class="k">-&gt;</span> <span class="o">&#39;</span><span onmouseout="hideTip(event, 'fs122', 226)" onmouseover="showTip(event, 'fs122', 226)" class="i">state</span>
+    <span onmouseout="hideTip(event, 'fs125', 227)" onmouseover="showTip(event, 'fs125', 227)" class="i">Apply</span> <span class="o">:</span> <span class="o">&#39;</span><span onmouseout="hideTip(event, 'fs122', 228)" onmouseover="showTip(event, 'fs122', 228)" class="i">state</span> <span class="k">-&gt;</span> <span class="o">&#39;</span><span class="i">event</span>   <span class="k">-&gt;</span> <span class="o">&#39;</span><span onmouseout="hideTip(event, 'fs122', 229)" onmouseover="showTip(event, 'fs122', 229)" class="i">state</span>
+    <span onmouseout="hideTip(event, 'fs126', 230)" onmouseover="showTip(event, 'fs126', 230)" class="i">Fire</span>  <span class="o">:</span> <span class="o">&#39;</span><span onmouseout="hideTip(event, 'fs122', 231)" onmouseover="showTip(event, 'fs122', 231)" class="i">state</span> <span class="k">-&gt;</span> <span class="o">&#39;</span><span class="i">trigger</span> <span class="k">-&gt;</span>  <span onmouseout="hideTip(event, 'fs59', 232)" onmouseover="showTip(event, 'fs59', 232)" class="t">Choice</span><span class="o">&lt;</span><span class="o">&#39;</span><span class="i">event</span>,<span onmouseout="hideTip(event, 'fs119', 233)" onmouseover="showTip(event, 'fs119', 233)" class="t">DomainError</span><span class="o">&gt;</span> }
+</code></pre></td>
+</tr>
+</table>
+
+<blockquote>
+  <p><code>AggregateRoot</code> type implemented for the <code>Car</code> aggregate root:</p>
+</blockquote>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l">1: </span>
+<span class="l">2: </span>
+<span class="l">3: </span>
+<span class="l">4: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="k">let</span> <span onmouseout="hideTip(event, 'fs152', 365)" onmouseover="showTip(event, 'fs152', 365)" class="i">root</span> <span class="o">=</span> 
+  { <span class="i">Zero</span>  <span class="o">=</span> (<span class="k">fun</span> _ <span class="k">-&gt;</span> <span onmouseout="hideTip(event, 'fs60', 366)" onmouseover="showTip(event, 'fs60', 366)" class="t">Unchecked</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs61', 367)" onmouseover="showTip(event, 'fs61', 367)" class="i">defaultof</span><span class="o">&lt;</span><span onmouseout="hideTip(event, 'fs73', 368)" onmouseover="showTip(event, 'fs73', 368)" class="t">Car</span><span class="o">&gt;</span>)
+    <span class="i">Apply</span> <span class="o">=</span>  <span onmouseout="hideTip(event, 'fs150', 369)" onmouseover="showTip(event, 'fs150', 369)" class="f">applyFn</span>
+    <span class="i">Fire</span>  <span class="o">=</span>  <span onmouseout="hideTip(event, 'fs138', 370)" onmouseover="showTip(event, 'fs138', 370)" class="f">fireFn</span> }
+</code></pre></td>
+</tr>
+</table>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l"> 1: </span>
+<span class="l"> 2: </span>
+<span class="l"> 3: </span>
+<span class="l"> 4: </span>
+<span class="l"> 5: </span>
+<span class="l"> 6: </span>
+<span class="l"> 7: </span>
+<span class="l"> 8: </span>
+<span class="l"> 9: </span>
+<span class="l">10: </span>
+<span class="l">11: </span>
+<span class="l">12: </span>
+<span class="l">13: </span>
+<span class="l">14: </span>
+<span class="l">15: </span>
+<span class="l">16: </span>
+<span class="l">17: </span>
+<span class="l">18: </span>
+<span class="l">19: </span>
+<span class="l">20: </span>
+<span class="l">21: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="k">let</span> <span onmouseout="hideTip(event, 'fs138', 261)" onmouseover="showTip(event, 'fs138', 261)" class="f">fireFn</span> <span class="o">=</span> 
+  (<span class="k">fun</span> <span onmouseout="hideTip(event, 'fs139', 262)" onmouseover="showTip(event, 'fs139', 262)" class="i">state</span> <span onmouseout="hideTip(event, 'fs140', 263)" onmouseover="showTip(event, 'fs140', 263)" class="i">trigger</span> <span class="k">-&gt;</span> 
+    <span class="k">match</span> <span onmouseout="hideTip(event, 'fs140', 264)" onmouseover="showTip(event, 'fs140', 264)" class="i">trigger</span> <span class="k">with</span>
+    | <span onmouseout="hideTip(event, 'fs114', 265)" onmouseover="showTip(event, 'fs114', 265)" class="p">Create</span> (<span onmouseout="hideTip(event, 'fs69', 266)" onmouseover="showTip(event, 'fs69', 266)" class="i">carID</span>,<span onmouseout="hideTip(event, 'fs141', 267)" onmouseover="showTip(event, 'fs141', 267)" class="i">year</span>,<span onmouseout="hideTip(event, 'fs142', 268)" onmouseover="showTip(event, 'fs142', 268)" class="i">carType</span>,<span onmouseout="hideTip(event, 'fs143', 269)" onmouseover="showTip(event, 'fs143', 269)" class="i">color</span>,<span onmouseout="hideTip(event, 'fs144', 270)" onmouseover="showTip(event, 'fs144', 270)" class="i">mileage</span>,<span onmouseout="hideTip(event, 'fs145', 271)" onmouseover="showTip(event, 'fs145', 271)" class="i">vin</span>,<span onmouseout="hideTip(event, 'fs146', 272)" onmouseover="showTip(event, 'fs146', 272)" class="i">owner</span>,<span onmouseout="hideTip(event, 'fs147', 273)" onmouseover="showTip(event, 'fs147', 273)" class="i">condition</span>) <span class="k">-&gt;</span> <span onmouseout="hideTip(event, 'fs148', 274)" onmouseover="showTip(event, 'fs148', 274)" class="i">choice</span> {
+        <span class="c">// Domain validation</span>
+        <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs69', 275)" onmouseover="showTip(event, 'fs69', 275)" class="i">carID</span>   <span class="o">=</span> <span onmouseout="hideTip(event, 'fs127', 276)" onmouseover="showTip(event, 'fs127', 276)" class="f">validateID</span> <span onmouseout="hideTip(event, 'fs69', 277)" onmouseover="showTip(event, 'fs69', 277)" class="i">carID</span>
+        <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs141', 278)" onmouseover="showTip(event, 'fs141', 278)" class="i">year</span>    <span class="o">=</span> <span onmouseout="hideTip(event, 'fs142', 279)" onmouseover="showTip(event, 'fs142', 279)" class="i">carType</span> <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs130', 280)" onmouseover="showTip(event, 'fs130', 280)" class="f">validateYear</span> <span onmouseout="hideTip(event, 'fs141', 281)" onmouseover="showTip(event, 'fs141', 281)" class="i">year</span>
+        <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs144', 282)" onmouseover="showTip(event, 'fs144', 282)" class="i">mileage</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs133', 283)" onmouseover="showTip(event, 'fs133', 283)" class="f">isNonNegative</span> <span onmouseout="hideTip(event, 'fs144', 284)" onmouseover="showTip(event, 'fs144', 284)" class="i">mileage</span>
+        <span class="c">// Return the domain event</span>
+        <span class="k">return</span> <span onmouseout="hideTip(event, 'fs108', 285)" onmouseover="showTip(event, 'fs108', 285)" class="p">Created</span> (<span onmouseout="hideTip(event, 'fs69', 286)" onmouseover="showTip(event, 'fs69', 286)" class="i">carID</span>,<span onmouseout="hideTip(event, 'fs141', 287)" onmouseover="showTip(event, 'fs141', 287)" class="i">year</span>,<span onmouseout="hideTip(event, 'fs142', 288)" onmouseover="showTip(event, 'fs142', 288)" class="i">carType</span>,<span onmouseout="hideTip(event, 'fs143', 289)" onmouseover="showTip(event, 'fs143', 289)" class="i">color</span>,<span onmouseout="hideTip(event, 'fs144', 290)" onmouseover="showTip(event, 'fs144', 290)" class="i">mileage</span>,<span onmouseout="hideTip(event, 'fs145', 291)" onmouseover="showTip(event, 'fs145', 291)" class="i">vin</span>,<span onmouseout="hideTip(event, 'fs146', 292)" onmouseover="showTip(event, 'fs146', 292)" class="i">owner</span>,<span onmouseout="hideTip(event, 'fs147', 293)" onmouseover="showTip(event, 'fs147', 293)" class="i">condition</span>) }
+    | <span onmouseout="hideTip(event, 'fs115', 294)" onmouseover="showTip(event, 'fs115', 294)" class="p">ChangeColor</span> (<span onmouseout="hideTip(event, 'fs143', 295)" onmouseover="showTip(event, 'fs143', 295)" class="i">color</span>) <span class="k">-&gt;</span> 
+        <span class="c">// No validation necessary</span>
+        <span onmouseout="hideTip(event, 'fs109', 296)" onmouseover="showTip(event, 'fs109', 296)" class="p">ColorChanged</span> <span onmouseout="hideTip(event, 'fs143', 297)" onmouseover="showTip(event, 'fs143', 297)" class="i">color</span> <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs59', 298)" onmouseover="showTip(event, 'fs59', 298)" class="t">Choice</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs48', 299)" onmouseover="showTip(event, 'fs48', 299)" class="f">result</span>
+    | <span onmouseout="hideTip(event, 'fs116', 300)" onmouseover="showTip(event, 'fs116', 300)" class="p">UpdateMileage</span> (<span onmouseout="hideTip(event, 'fs144', 301)" onmouseover="showTip(event, 'fs144', 301)" class="i">mileage</span>) <span class="k">-&gt;</span> <span onmouseout="hideTip(event, 'fs148', 302)" onmouseover="showTip(event, 'fs148', 302)" class="i">choice</span> {
+        <span class="c">// Domain validation</span>
+        <span class="k">let!</span> <span onmouseout="hideTip(event, 'fs144', 303)" onmouseover="showTip(event, 'fs144', 303)" class="i">mileage</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs144', 304)" onmouseover="showTip(event, 'fs144', 304)" class="i">mileage</span> <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs135', 305)" onmouseover="showTip(event, 'fs135', 305)" class="f">isGreaterThan</span> <span onmouseout="hideTip(event, 'fs139', 306)" onmouseover="showTip(event, 'fs139', 306)" class="i">state</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs78', 307)" onmouseover="showTip(event, 'fs78', 307)" class="i">Mileage</span>
+        <span class="k">return</span> <span onmouseout="hideTip(event, 'fs110', 308)" onmouseover="showTip(event, 'fs110', 308)" class="p">MileageChanged</span> <span onmouseout="hideTip(event, 'fs144', 309)" onmouseover="showTip(event, 'fs144', 309)" class="i">mileage</span> }
+    | <span onmouseout="hideTip(event, 'fs117', 310)" onmouseover="showTip(event, 'fs117', 310)" class="p">UpdateCondition</span> (<span onmouseout="hideTip(event, 'fs147', 311)" onmouseover="showTip(event, 'fs147', 311)" class="i">condition</span>) <span class="k">-&gt;</span>
+        <span onmouseout="hideTip(event, 'fs111', 312)" onmouseover="showTip(event, 'fs111', 312)" class="p">ConditionChanged</span> <span onmouseout="hideTip(event, 'fs147', 313)" onmouseover="showTip(event, 'fs147', 313)" class="i">condition</span> <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs59', 314)" onmouseover="showTip(event, 'fs59', 314)" class="t">Choice</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs48', 315)" onmouseover="showTip(event, 'fs48', 315)" class="f">result</span>
+    | <span onmouseout="hideTip(event, 'fs118', 316)" onmouseover="showTip(event, 'fs118', 316)" class="p">ChangeOwner</span> (<span onmouseout="hideTip(event, 'fs149', 317)" onmouseover="showTip(event, 'fs149', 317)" class="i">ownerID</span>) <span class="k">-&gt;</span>
+        <span onmouseout="hideTip(event, 'fs112', 318)" onmouseover="showTip(event, 'fs112', 318)" class="p">OwnerChanged</span> <span onmouseout="hideTip(event, 'fs149', 319)" onmouseover="showTip(event, 'fs149', 319)" class="i">ownerID</span> <span class="o">|&gt;</span> <span onmouseout="hideTip(event, 'fs59', 320)" onmouseover="showTip(event, 'fs59', 320)" class="t">Choice</span><span class="o">.</span><span onmouseout="hideTip(event, 'fs48', 321)" onmouseover="showTip(event, 'fs48', 321)" class="f">result</span>)
+</code></pre></td>
+</tr>
+</table>
+
+<table class="pre"><tr><td class="lines"><pre class="fssnip"><span class="l"> 1: </span>
+<span class="l"> 2: </span>
+<span class="l"> 3: </span>
+<span class="l"> 4: </span>
+<span class="l"> 5: </span>
+<span class="l"> 6: </span>
+<span class="l"> 7: </span>
+<span class="l"> 8: </span>
+<span class="l"> 9: </span>
+<span class="l">10: </span>
+<span class="l">11: </span>
+<span class="l">12: </span>
+<span class="l">13: </span>
+<span class="l">14: </span>
+<span class="l">15: </span>
+<span class="l">16: </span>
+<span class="l">17: </span>
+<span class="l">18: </span>
+<span class="l">19: </span>
+<span class="l">20: </span>
+</pre></td>
+<td class="snippet"><pre class="fssnip highlighted"><code lang="fsharp"><span class="k">let</span> <span onmouseout="hideTip(event, 'fs150', 322)" onmouseover="showTip(event, 'fs150', 322)" class="f">applyFn</span> <span class="o">=</span>
+  (<span class="k">fun</span> <span onmouseout="hideTip(event, 'fs139', 323)" onmouseover="showTip(event, 'fs139', 323)" class="i">state</span> <span onmouseout="hideTip(event, 'fs151', 324)" onmouseover="showTip(event, 'fs151', 324)" class="i">event</span> <span class="k">-&gt;</span>
+    <span class="k">match</span> <span onmouseout="hideTip(event, 'fs151', 325)" onmouseover="showTip(event, 'fs151', 325)" class="i">event</span> <span class="k">with</span> 
+    | <span onmouseout="hideTip(event, 'fs108', 326)" onmouseover="showTip(event, 'fs108', 326)" class="p">Created</span> (<span onmouseout="hideTip(event, 'fs69', 327)" onmouseover="showTip(event, 'fs69', 327)" class="i">carID</span>,<span onmouseout="hideTip(event, 'fs141', 328)" onmouseover="showTip(event, 'fs141', 328)" class="i">year</span>,<span onmouseout="hideTip(event, 'fs142', 329)" onmouseover="showTip(event, 'fs142', 329)" class="i">carType</span>,<span onmouseout="hideTip(event, 'fs143', 330)" onmouseover="showTip(event, 'fs143', 330)" class="i">color</span>,<span onmouseout="hideTip(event, 'fs144', 331)" onmouseover="showTip(event, 'fs144', 331)" class="i">mileage</span>,<span onmouseout="hideTip(event, 'fs145', 332)" onmouseover="showTip(event, 'fs145', 332)" class="i">vin</span>,<span onmouseout="hideTip(event, 'fs146', 333)" onmouseover="showTip(event, 'fs146', 333)" class="i">owner</span>,<span onmouseout="hideTip(event, 'fs147', 334)" onmouseover="showTip(event, 'fs147', 334)" class="i">condition</span>) <span class="k">-&gt;</span>
+        { <span onmouseout="hideTip(event, 'fs139', 335)" onmouseover="showTip(event, 'fs139', 335)" class="i">state</span> <span class="k">with</span> <span class="i">CarID</span>     <span class="o">=</span> <span onmouseout="hideTip(event, 'fs69', 336)" onmouseover="showTip(event, 'fs69', 336)" class="i">carID</span>
+                     <span class="i">Year</span>      <span class="o">=</span> <span onmouseout="hideTip(event, 'fs141', 337)" onmouseover="showTip(event, 'fs141', 337)" class="i">year</span>
+                     <span onmouseout="hideTip(event, 'fs89', 338)" onmouseover="showTip(event, 'fs89', 338)" class="i">CarType</span>   <span class="o">=</span> <span onmouseout="hideTip(event, 'fs142', 339)" onmouseover="showTip(event, 'fs142', 339)" class="i">carType</span>
+                     <span onmouseout="hideTip(event, 'fs98', 340)" onmouseover="showTip(event, 'fs98', 340)" class="i">Color</span>     <span class="o">=</span> <span onmouseout="hideTip(event, 'fs143', 341)" onmouseover="showTip(event, 'fs143', 341)" class="i">color</span>
+                     <span class="i">Mileage</span>   <span class="o">=</span> <span onmouseout="hideTip(event, 'fs144', 342)" onmouseover="showTip(event, 'fs144', 342)" class="i">mileage</span>
+                     <span class="i">VIN</span>       <span class="o">=</span> <span onmouseout="hideTip(event, 'fs145', 343)" onmouseover="showTip(event, 'fs145', 343)" class="i">vin</span>
+                     <span class="i">Owner</span>     <span class="o">=</span> <span onmouseout="hideTip(event, 'fs146', 344)" onmouseover="showTip(event, 'fs146', 344)" class="i">owner</span>
+                     <span onmouseout="hideTip(event, 'fs102', 345)" onmouseover="showTip(event, 'fs102', 345)" class="i">Condition</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs147', 346)" onmouseover="showTip(event, 'fs147', 346)" class="i">condition</span> }
+    | <span onmouseout="hideTip(event, 'fs109', 347)" onmouseover="showTip(event, 'fs109', 347)" class="p">ColorChanged</span> (<span onmouseout="hideTip(event, 'fs143', 348)" onmouseover="showTip(event, 'fs143', 348)" class="i">color</span>) <span class="k">-&gt;</span>
+        { <span onmouseout="hideTip(event, 'fs139', 349)" onmouseover="showTip(event, 'fs139', 349)" class="i">state</span> <span class="k">with</span> <span onmouseout="hideTip(event, 'fs98', 350)" onmouseover="showTip(event, 'fs98', 350)" class="i">Color</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs143', 351)" onmouseover="showTip(event, 'fs143', 351)" class="i">color</span> }
+    | <span onmouseout="hideTip(event, 'fs110', 352)" onmouseover="showTip(event, 'fs110', 352)" class="p">MileageChanged</span> (<span onmouseout="hideTip(event, 'fs144', 353)" onmouseover="showTip(event, 'fs144', 353)" class="i">mileage</span>) <span class="k">-&gt;</span>
+        { <span onmouseout="hideTip(event, 'fs139', 354)" onmouseover="showTip(event, 'fs139', 354)" class="i">state</span> <span class="k">with</span> <span class="i">Mileage</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs144', 355)" onmouseover="showTip(event, 'fs144', 355)" class="i">mileage</span> }
+    | <span onmouseout="hideTip(event, 'fs111', 356)" onmouseover="showTip(event, 'fs111', 356)" class="p">ConditionChanged</span> (<span onmouseout="hideTip(event, 'fs147', 357)" onmouseover="showTip(event, 'fs147', 357)" class="i">condition</span>) <span class="k">-&gt;</span>
+        { <span onmouseout="hideTip(event, 'fs139', 358)" onmouseover="showTip(event, 'fs139', 358)" class="i">state</span> <span class="k">with</span> <span onmouseout="hideTip(event, 'fs102', 359)" onmouseover="showTip(event, 'fs102', 359)" class="i">Condition</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs147', 360)" onmouseover="showTip(event, 'fs147', 360)" class="i">condition</span> }
+    | <span onmouseout="hideTip(event, 'fs112', 361)" onmouseover="showTip(event, 'fs112', 361)" class="p">OwnerChanged</span> (<span onmouseout="hideTip(event, 'fs149', 362)" onmouseover="showTip(event, 'fs149', 362)" class="i">ownerID</span>) <span class="k">-&gt;</span>
+        { <span onmouseout="hideTip(event, 'fs139', 363)" onmouseover="showTip(event, 'fs139', 363)" class="i">state</span> <span class="k">with</span> <span class="i">Owner</span> <span class="o">=</span> <span onmouseout="hideTip(event, 'fs149', 364)" onmouseover="showTip(event, 'fs149', 364)" class="i">ownerID</span> })
+</code></pre></td>
+</tr>
+</table>
+
+<blockquote>
+  <p>Notice the <code>AggregateRoot</code> type has 3 functions. <code>Zero</code> provides a starting state for the Aggregate Root, frequently used during rehydration/hydration of
+Domain Events. <code>Apply</code> provides model rehydration functionality. <code>Fire</code> is a function that takes the current
+state of the Aggregate and a Domain Trigger, and returns a Domain Event.</p>
+</blockquote>
+
+<h3>Closing Thoughts</h3>
+
+<p>There are many ways to expose domain actions through an API. The Trigger Pattern approach is one that strives to allow you to maintain 
+somewhat of a ReSTful API. Another approach I've encountered (but haven't tested), is moving the "trigger" logic into the client,
+effectively placing a command-type in the request headers. I feel this approach is may be moving you torwards RPC rather than ReST, but it
+is another option. A similar alternative is just using the PATCH verb, where the client supplies the delta change to the API, effectively
+eliminating the need for Triggers <em>in the most trivial of cases</em>.</p>
+
+<hr />
+
+<p><em>Written by:</em><br />
+Matt Hawkins  |<br />
+December 18th 2015  |<br />
+Twitter: <a href="https://twitter.com/mattchawkins">@mattchawkins</a>  |</p>
+
+          <div class="tip" id="fs1">namespace System</div>
+<div class="tip" id="fs2">namespace ExtCore</div>
+<div class="tip" id="fs3">namespace ExtCore.Control</div>
+<div class="tip" id="fs4">type CarCommands =<br />&#160;&#160;| Create of CarRepresentation<br />&#160;&#160;| Update of CarRepresentation<br />&#160;&#160;| Delete of carID: Guid<br /><br />Full name: Post.CarCommands</div>
+<div class="tip" id="fs5">union case CarCommands.Create: CarRepresentation -&gt; CarCommands</div>
+<div class="tip" id="fs6">type CarRepresentation =<br />&#160;&#160;{CarID: Guid;<br />&#160;&#160;&#160;Year: int;<br />&#160;&#160;&#160;Make: string;<br />&#160;&#160;&#160;Model: string;<br />&#160;&#160;&#160;Color: string;<br />&#160;&#160;&#160;Mileage: int;<br />&#160;&#160;&#160;VIN: string;<br />&#160;&#160;&#160;Condition: string;<br />&#160;&#160;&#160;Owner: Guid;}<br /><br />Full name: Post.CarRepresentation</div>
+<div class="tip" id="fs7">union case CarCommands.Update: CarRepresentation -&gt; CarCommands</div>
+<div class="tip" id="fs8">union case CarCommands.Delete: carID: Guid -&gt; CarCommands</div>
+<div class="tip" id="fs9">Multiple items<br />type Guid =<br />&#160;&#160;struct<br />&#160;&#160;&#160;&#160;new : b:byte[] -&gt; Guid + 4 overloads<br />&#160;&#160;&#160;&#160;member CompareTo : value:obj -&gt; int + 1 overload<br />&#160;&#160;&#160;&#160;member Equals : o:obj -&gt; bool + 1 overload<br />&#160;&#160;&#160;&#160;member GetHashCode : unit -&gt; int<br />&#160;&#160;&#160;&#160;member ToByteArray : unit -&gt; byte[]<br />&#160;&#160;&#160;&#160;member ToString : unit -&gt; string + 2 overloads<br />&#160;&#160;&#160;&#160;static val Empty : Guid<br />&#160;&#160;&#160;&#160;static member NewGuid : unit -&gt; Guid<br />&#160;&#160;&#160;&#160;static member Parse : input:string -&gt; Guid<br />&#160;&#160;&#160;&#160;static member ParseExact : input:string * format:string -&gt; Guid<br />&#160;&#160;&#160;&#160;...<br />&#160;&#160;end<br /><br />Full name: System.Guid<br /><br />--------------------<br />Guid()<br />Guid(b: byte []) : unit<br />Guid(g: string) : unit<br />Guid(a: int, b: int16, c: int16, d: byte []) : unit<br />Guid(a: uint32, b: uint16, c: uint16, d: byte, e: byte, f: byte, g: byte, h: byte, i: byte, j: byte, k: byte) : unit<br />Guid(a: int, b: int16, c: int16, d: byte, e: byte, f: byte, g: byte, h: byte, i: byte, j: byte, k: byte) : unit</div>
+<div class="tip" id="fs10">CarRepresentation.CarID: Guid</div>
+<div class="tip" id="fs11">CarRepresentation.Year: int</div>
+<div class="tip" id="fs12">Multiple items<br />val int : value:&#39;T -&gt; int (requires member op_Explicit)<br /><br />Full name: Microsoft.FSharp.Core.Operators.int<br /><br />--------------------<br />type int = int32<br /><br />Full name: Microsoft.FSharp.Core.int<br /><br />--------------------<br />type int&lt;&#39;Measure&gt; = int<br /><br />Full name: Microsoft.FSharp.Core.int&lt;_&gt;</div>
+<div class="tip" id="fs13">CarRepresentation.Make: string</div>
+<div class="tip" id="fs14">Multiple items<br />val string : value:&#39;T -&gt; string<br /><br />Full name: Microsoft.FSharp.Core.Operators.string<br /><br />--------------------<br />type string = String<br /><br />Full name: Microsoft.FSharp.Core.string<br /><br />--------------------<br />type string&lt;&#39;Measure&gt; = string<br /><br />Full name: ExtCore.string&lt;_&gt;</div>
+<div class="tip" id="fs15">CarRepresentation.Model: string</div>
+<div class="tip" id="fs16">CarRepresentation.Color: string</div>
+<div class="tip" id="fs17">CarRepresentation.Mileage: int</div>
+<div class="tip" id="fs18">CarRepresentation.VIN: string</div>
+<div class="tip" id="fs19">CarRepresentation.Condition: string</div>
+<div class="tip" id="fs20">CarRepresentation.Owner: Guid</div>
+<div class="tip" id="fs21">type HTTPRequest =<br />&#160;&#160;{Body: CarRepresentation;}<br /><br />Full name: Post.HTTPRequest</div>
+<div class="tip" id="fs22">HTTPRequest.Body: CarRepresentation</div>
+<div class="tip" id="fs23">val sendToQueue : message:&#39;a -&gt; unit<br /><br />Full name: Post.sendToQueue</div>
+<div class="tip" id="fs24">val message : &#39;a</div>
+<div class="tip" id="fs25">val extractID : uri:&#39;a -&gt; Guid<br /><br />Full name: Post.extractID</div>
+<div class="tip" id="fs26">val uri : &#39;a</div>
+<div class="tip" id="fs27">Guid.NewGuid() : Guid</div>
+<div class="tip" id="fs28">val OK : locationHeaders:&#39;a -&gt; unit<br /><br />Full name: Post.OK</div>
+<div class="tip" id="fs29">val locationHeaders : &#39;a</div>
+<div class="tip" id="fs30">val Accepted : body:&#39;a -&gt; unit<br /><br />Full name: Post.Accepted<br /><em><br /><br />&#160;Returns a 202 status code</em></div>
+<div class="tip" id="fs31">val body : &#39;a</div>
+<div class="tip" id="fs32">Multiple items<br />module Choice<br /><br />from ExtCore<br /><br />--------------------<br />type Choice&lt;&#39;T1,&#39;T2&gt; =<br />&#160;&#160;| Choice1Of2 of &#39;T1<br />&#160;&#160;| Choice2Of2 of &#39;T2<br /><br />Full name: Microsoft.FSharp.Core.Choice&lt;_,_&gt;<br /><br />--------------------<br />type Choice&lt;&#39;T1,&#39;T2,&#39;T3&gt; =<br />&#160;&#160;| Choice1Of3 of &#39;T1<br />&#160;&#160;| Choice2Of3 of &#39;T2<br />&#160;&#160;| Choice3Of3 of &#39;T3<br /><br />Full name: Microsoft.FSharp.Core.Choice&lt;_,_,_&gt;<br /><br />--------------------<br />type Choice&lt;&#39;T1,&#39;T2,&#39;T3,&#39;T4&gt; =<br />&#160;&#160;| Choice1Of4 of &#39;T1<br />&#160;&#160;| Choice2Of4 of &#39;T2<br />&#160;&#160;| Choice3Of4 of &#39;T3<br />&#160;&#160;| Choice4Of4 of &#39;T4<br /><br />Full name: Microsoft.FSharp.Core.Choice&lt;_,_,_,_&gt;<br /><br />--------------------<br />type Choice&lt;&#39;T1,&#39;T2,&#39;T3,&#39;T4,&#39;T5&gt; =<br />&#160;&#160;| Choice1Of5 of &#39;T1<br />&#160;&#160;| Choice2Of5 of &#39;T2<br />&#160;&#160;| Choice3Of5 of &#39;T3<br />&#160;&#160;| Choice4Of5 of &#39;T4<br />&#160;&#160;| Choice5Of5 of &#39;T5<br /><br />Full name: Microsoft.FSharp.Core.Choice&lt;_,_,_,_,_&gt;<br /><br />--------------------<br />type Choice&lt;&#39;T1,&#39;T2,&#39;T3,&#39;T4,&#39;T5,&#39;T6&gt; =<br />&#160;&#160;| Choice1Of6 of &#39;T1<br />&#160;&#160;| Choice2Of6 of &#39;T2<br />&#160;&#160;| Choice3Of6 of &#39;T3<br />&#160;&#160;| Choice4Of6 of &#39;T4<br />&#160;&#160;| Choice5Of6 of &#39;T5<br />&#160;&#160;| Choice6Of6 of &#39;T6<br /><br />Full name: Microsoft.FSharp.Core.Choice&lt;_,_,_,_,_,_&gt;<br /><br />--------------------<br />type Choice&lt;&#39;T1,&#39;T2,&#39;T3,&#39;T4,&#39;T5,&#39;T6,&#39;T7&gt; =<br />&#160;&#160;| Choice1Of7 of &#39;T1<br />&#160;&#160;| Choice2Of7 of &#39;T2<br />&#160;&#160;| Choice3Of7 of &#39;T3<br />&#160;&#160;| Choice4Of7 of &#39;T4<br />&#160;&#160;| Choice5Of7 of &#39;T5<br />&#160;&#160;| Choice6Of7 of &#39;T6<br />&#160;&#160;| Choice7Of7 of &#39;T7<br /><br />Full name: Microsoft.FSharp.Core.Choice&lt;_,_,_,_,_,_,_&gt;</div>
+<div class="tip" id="fs33">val packSequence : col:seq&lt;Choice&lt;&#39;a,&#39;b&gt;&gt; -&gt; Choice&lt;seq&lt;&#39;a&gt;,&#39;b []&gt;<br /><br />Full name: Post.Choice.packSequence</div>
+<div class="tip" id="fs34">val col : seq&lt;Choice&lt;&#39;a,&#39;b&gt;&gt;</div>
+<div class="tip" id="fs35">Multiple items<br />module Seq<br /><br />from ExtCore.Collections<br /><br />--------------------<br />module Seq<br /><br />from Microsoft.FSharp.Collections</div>
+<div class="tip" id="fs36">val map : mapping:(&#39;T -&gt; &#39;U) -&gt; source:seq&lt;&#39;T&gt; -&gt; seq&lt;&#39;U&gt;<br /><br />Full name: Microsoft.FSharp.Collections.Seq.map</div>
+<div class="tip" id="fs37">val s : Choice&lt;&#39;a,&#39;b&gt;</div>
+<div class="tip" id="fs38">union case Choice.Choice1Of2: &#39;T1 -&gt; Choice&lt;&#39;T1,&#39;T2&gt;</div>
+<div class="tip" id="fs39">union case Choice.Choice2Of2: &#39;T2 -&gt; Choice&lt;&#39;T1,&#39;T2&gt;</div>
+<div class="tip" id="fs40">type Array =<br />&#160;&#160;member Clone : unit -&gt; obj<br />&#160;&#160;member CopyTo : array:Array * index:int -&gt; unit + 1 overload<br />&#160;&#160;member GetEnumerator : unit -&gt; IEnumerator<br />&#160;&#160;member GetLength : dimension:int -&gt; int<br />&#160;&#160;member GetLongLength : dimension:int -&gt; int64<br />&#160;&#160;member GetLowerBound : dimension:int -&gt; int<br />&#160;&#160;member GetUpperBound : dimension:int -&gt; int<br />&#160;&#160;member GetValue : [&lt;ParamArray&gt;] indices:int[] -&gt; obj + 7 overloads<br />&#160;&#160;member Initialize : unit -&gt; unit<br />&#160;&#160;member IsFixedSize : bool<br />&#160;&#160;...<br /><br />Full name: System.Array</div>
+<div class="tip" id="fs41">val ofSeq : source:seq&lt;&#39;T&gt; -&gt; &#39;T []<br /><br />Full name: Microsoft.FSharp.Collections.Array.ofSeq</div>
+<div class="tip" id="fs42">val partition : predicate:(&#39;T -&gt; bool) -&gt; array:&#39;T [] -&gt; &#39;T [] * &#39;T []<br /><br />Full name: Microsoft.FSharp.Collections.Array.partition</div>
+<div class="tip" id="fs43">Multiple items<br />val obj : bool * Choice&lt;&#39;a,&#39;b&gt;<br /><br />--------------------<br />type obj = Object<br /><br />Full name: Microsoft.FSharp.Core.obj</div>
+<div class="tip" id="fs44">val fst : tuple:(&#39;T1 * &#39;T2) -&gt; &#39;T1<br /><br />Full name: Microsoft.FSharp.Core.Operators.fst</div>
+<div class="tip" id="fs45">val passed : (bool * Choice&lt;&#39;a,&#39;b&gt;) []</div>
+<div class="tip" id="fs46">val failed : (bool * Choice&lt;&#39;a,&#39;b&gt;) []</div>
+<div class="tip" id="fs47">property Array.Length: int</div>
+<div class="tip" id="fs48">val result : value:&#39;T -&gt; Choice&lt;&#39;T,&#39;Error&gt;<br /><br />Full name: ExtCore.Choice.result</div>
+<div class="tip" id="fs49">val map : mapping:(&#39;T -&gt; &#39;U) -&gt; array:&#39;T [] -&gt; &#39;U []<br /><br />Full name: Microsoft.FSharp.Collections.Array.map</div>
+<div class="tip" id="fs50">val p : bool * Choice&lt;&#39;a,&#39;b&gt;</div>
+<div class="tip" id="fs51">val snd : tuple:(&#39;T1 * &#39;T2) -&gt; &#39;T2<br /><br />Full name: Microsoft.FSharp.Core.Operators.snd</div>
+<div class="tip" id="fs52">val get : value:Choice&lt;&#39;T,&#39;Error&gt; -&gt; &#39;T<br /><br />Full name: ExtCore.Choice.get</div>
+<div class="tip" id="fs53">val ofArray : source:&#39;T [] -&gt; seq&lt;&#39;T&gt;<br /><br />Full name: Microsoft.FSharp.Collections.Seq.ofArray</div>
+<div class="tip" id="fs54">val error : value:&#39;Error -&gt; Choice&lt;&#39;T,&#39;Error&gt;<br /><br />Full name: ExtCore.Choice.error</div>
+<div class="tip" id="fs55">val err : Choice&lt;&#39;a,&#39;b&gt;</div>
+<div class="tip" id="fs56">val getError : value:Choice&lt;&#39;T,&#39;Error&gt; -&gt; &#39;Error<br /><br />Full name: ExtCore.Choice.getError</div>
+<div class="tip" id="fs57">val rehydrate : streamID:Guid -&gt; Choice&lt;&#39;aggregate,string&gt;<br /><br />Full name: Post.EventStore.rehydrate</div>
+<div class="tip" id="fs58">val streamID : Guid</div>
+<div class="tip" id="fs59">Multiple items<br />module Choice<br /><br />from Post<br /><br />--------------------<br />module Choice<br /><br />from ExtCore<br /><br />--------------------<br />type Choice&lt;&#39;T1,&#39;T2&gt; =<br />&#160;&#160;| Choice1Of2 of &#39;T1<br />&#160;&#160;| Choice2Of2 of &#39;T2<br /><br />Full name: Microsoft.FSharp.Core.Choice&lt;_,_&gt;<br /><br />--------------------<br />type Choice&lt;&#39;T1,&#39;T2,&#39;T3&gt; =<br />&#160;&#160;| Choice1Of3 of &#39;T1<br />&#160;&#160;| Choice2Of3 of &#39;T2<br />&#160;&#160;| Choice3Of3 of &#39;T3<br /><br />Full name: Microsoft.FSharp.Core.Choice&lt;_,_,_&gt;<br /><br />--------------------<br />type Choice&lt;&#39;T1,&#39;T2,&#39;T3,&#39;T4&gt; =<br />&#160;&#160;| Choice1Of4 of &#39;T1<br />&#160;&#160;| Choice2Of4 of &#39;T2<br />&#160;&#160;| Choice3Of4 of &#39;T3<br />&#160;&#160;| Choice4Of4 of &#39;T4<br /><br />Full name: Microsoft.FSharp.Core.Choice&lt;_,_,_,_&gt;<br /><br />--------------------<br />type Choice&lt;&#39;T1,&#39;T2,&#39;T3,&#39;T4,&#39;T5&gt; =<br />&#160;&#160;| Choice1Of5 of &#39;T1<br />&#160;&#160;| Choice2Of5 of &#39;T2<br />&#160;&#160;| Choice3Of5 of &#39;T3<br />&#160;&#160;| Choice4Of5 of &#39;T4<br />&#160;&#160;| Choice5Of5 of &#39;T5<br /><br />Full name: Microsoft.FSharp.Core.Choice&lt;_,_,_,_,_&gt;<br /><br />--------------------<br />type Choice&lt;&#39;T1,&#39;T2,&#39;T3,&#39;T4,&#39;T5,&#39;T6&gt; =<br />&#160;&#160;| Choice1Of6 of &#39;T1<br />&#160;&#160;| Choice2Of6 of &#39;T2<br />&#160;&#160;| Choice3Of6 of &#39;T3<br />&#160;&#160;| Choice4Of6 of &#39;T4<br />&#160;&#160;| Choice5Of6 of &#39;T5<br />&#160;&#160;| Choice6Of6 of &#39;T6<br /><br />Full name: Microsoft.FSharp.Core.Choice&lt;_,_,_,_,_,_&gt;<br /><br />--------------------<br />type Choice&lt;&#39;T1,&#39;T2,&#39;T3,&#39;T4,&#39;T5,&#39;T6,&#39;T7&gt; =<br />&#160;&#160;| Choice1Of7 of &#39;T1<br />&#160;&#160;| Choice2Of7 of &#39;T2<br />&#160;&#160;| Choice3Of7 of &#39;T3<br />&#160;&#160;| Choice4Of7 of &#39;T4<br />&#160;&#160;| Choice5Of7 of &#39;T5<br />&#160;&#160;| Choice6Of7 of &#39;T6<br />&#160;&#160;| Choice7Of7 of &#39;T7<br /><br />Full name: Microsoft.FSharp.Core.Choice&lt;_,_,_,_,_,_,_&gt;</div>
+<div class="tip" id="fs60">module Unchecked<br /><br />from Microsoft.FSharp.Core.Operators</div>
+<div class="tip" id="fs61">val defaultof&lt;&#39;T&gt; : &#39;T<br /><br />Full name: Microsoft.FSharp.Core.Operators.Unchecked.defaultof</div>
+<div class="tip" id="fs62">val saveEvents : streamID:Guid -&gt; events:&#39;a -&gt; Choice&lt;unit,&#39;b&gt;<br /><br />Full name: Post.EventStore.saveEvents</div>
+<div class="tip" id="fs63">val events : &#39;a</div>
+<div class="tip" id="fs64">val some : a:&#39;a -&gt; &#39;a<br /><br />Full name: Post.some</div>
+<div class="tip" id="fs65">val a : &#39;a</div>
+<div class="tip" id="fs66">val broadcast : events:&#39;a -&gt; Choice&lt;unit,&#39;b&gt;<br /><br />Full name: Post.broadcast<br /><em><br /><br />&#160;Broadcasts events to interested parties</em></div>
+<div class="tip" id="fs67">val postEndpoint : httpRequest:HTTPRequest -&gt; unit<br /><br />Full name: Post.postEndpoint</div>
+<div class="tip" id="fs68">val httpRequest : HTTPRequest</div>
+<div class="tip" id="fs69">val carID : Guid</div>
+<div class="tip" id="fs70">val putEndpoint : uri:&#39;a -&gt; httpRequest:HTTPRequest -&gt; unit<br /><br />Full name: Post.putEndpoint</div>
+<div class="tip" id="fs71">Multiple items<br />type CustomEqualityAttribute =<br />&#160;&#160;inherit Attribute<br />&#160;&#160;new : unit -&gt; CustomEqualityAttribute<br /><br />Full name: Microsoft.FSharp.Core.CustomEqualityAttribute<br /><br />--------------------<br />new : unit -&gt; CustomEqualityAttribute</div>
+<div class="tip" id="fs72">Multiple items<br />type NoComparisonAttribute =<br />&#160;&#160;inherit Attribute<br />&#160;&#160;new : unit -&gt; NoComparisonAttribute<br /><br />Full name: Microsoft.FSharp.Core.NoComparisonAttribute<br /><br />--------------------<br />new : unit -&gt; NoComparisonAttribute</div>
+<div class="tip" id="fs73">type Car =<br />&#160;&#160;{CarID: Guid;<br />&#160;&#160;&#160;Year: int;<br />&#160;&#160;&#160;CarType: CarType;<br />&#160;&#160;&#160;Color: Color;<br />&#160;&#160;&#160;Mileage: int;<br />&#160;&#160;&#160;VIN: string;<br />&#160;&#160;&#160;Condition: Condition;<br />&#160;&#160;&#160;Owner: Guid;}<br />&#160;&#160;override Equals : that:obj -&gt; bool<br />&#160;&#160;override GetHashCode : unit -&gt; int<br /><br />Full name: Post.Car</div>
+<div class="tip" id="fs74">Car.CarID: Guid</div>
+<div class="tip" id="fs75">Car.Year: int</div>
+<div class="tip" id="fs76">Multiple items<br />Car.CarType: CarType<br /><br />--------------------<br />type CarType =<br />&#160;&#160;| Ford of Ford<br />&#160;&#160;| BMW of BMW<br /><br />Full name: Post.CarType</div>
+<div class="tip" id="fs77">Multiple items<br />Car.Color: Color<br /><br />--------------------<br />type Color =<br />&#160;&#160;| Red<br />&#160;&#160;| White<br />&#160;&#160;| Blue<br /><br />Full name: Post.Color</div>
+<div class="tip" id="fs78">Car.Mileage: int</div>
+<div class="tip" id="fs79">Car.VIN: string</div>
+<div class="tip" id="fs80">Multiple items<br />Car.Condition: Condition<br /><br />--------------------<br />type Condition =<br />&#160;&#160;| Excellent<br />&#160;&#160;| Good<br />&#160;&#160;| Average<br />&#160;&#160;| Poor<br /><br />Full name: Post.Condition</div>
+<div class="tip" id="fs81">Car.Owner: Guid</div>
+<div class="tip" id="fs82">val this : Car</div>
+<div class="tip" id="fs83">override Car.Equals : that:obj -&gt; bool<br /><br />Full name: Post.Car.Equals</div>
+<div class="tip" id="fs84">val that : obj</div>
+<div class="tip" id="fs85">type obj = Object<br /><br />Full name: Microsoft.FSharp.Core.obj</div>
+<div class="tip" id="fs86">val that : Car</div>
+<div class="tip" id="fs87">override Car.GetHashCode : unit -&gt; int<br /><br />Full name: Post.Car.GetHashCode</div>
+<div class="tip" id="fs88">val hash : obj:&#39;T -&gt; int (requires equality)<br /><br />Full name: Microsoft.FSharp.Core.Operators.hash</div>
+<div class="tip" id="fs89">type CarType =<br />&#160;&#160;| Ford of Ford<br />&#160;&#160;| BMW of BMW<br /><br />Full name: Post.CarType</div>
+<div class="tip" id="fs90">Multiple items<br />union case CarType.Ford: Ford -&gt; CarType<br /><br />--------------------<br />type Ford =<br />&#160;&#160;| Escape<br />&#160;&#160;| F150<br /><br />Full name: Post.Ford</div>
+<div class="tip" id="fs91">Multiple items<br />union case CarType.BMW: BMW -&gt; CarType<br /><br />--------------------<br />type BMW =<br />&#160;&#160;| M3<br />&#160;&#160;| M5<br /><br />Full name: Post.BMW</div>
+<div class="tip" id="fs92">type Ford =<br />&#160;&#160;| Escape<br />&#160;&#160;| F150<br /><br />Full name: Post.Ford</div>
+<div class="tip" id="fs93">union case Ford.Escape: Ford</div>
+<div class="tip" id="fs94">union case Ford.F150: Ford</div>
+<div class="tip" id="fs95">type BMW =<br />&#160;&#160;| M3<br />&#160;&#160;| M5<br /><br />Full name: Post.BMW</div>
+<div class="tip" id="fs96">union case BMW.M3: BMW</div>
+<div class="tip" id="fs97">union case BMW.M5: BMW</div>
+<div class="tip" id="fs98">type Color =<br />&#160;&#160;| Red<br />&#160;&#160;| White<br />&#160;&#160;| Blue<br /><br />Full name: Post.Color</div>
+<div class="tip" id="fs99">union case Color.Red: Color</div>
+<div class="tip" id="fs100">union case Color.White: Color</div>
+<div class="tip" id="fs101">union case Color.Blue: Color</div>
+<div class="tip" id="fs102">type Condition =<br />&#160;&#160;| Excellent<br />&#160;&#160;| Good<br />&#160;&#160;| Average<br />&#160;&#160;| Poor<br /><br />Full name: Post.Condition</div>
+<div class="tip" id="fs103">union case Condition.Excellent: Condition</div>
+<div class="tip" id="fs104">union case Condition.Good: Condition</div>
+<div class="tip" id="fs105">union case Condition.Average: Condition</div>
+<div class="tip" id="fs106">union case Condition.Poor: Condition</div>
+<div class="tip" id="fs107">type CarEvents =<br />&#160;&#160;| Created of carID: Guid * year: int * CarType * Color * mileage: int * vin: string * owner: Guid * condition: Condition<br />&#160;&#160;| ColorChanged of Color<br />&#160;&#160;| MileageChanged of mileage: int<br />&#160;&#160;| ConditionChanged of Condition<br />&#160;&#160;| OwnerChanged of owner: Guid<br /><br />Full name: Post.CarEvents</div>
+<div class="tip" id="fs108">union case CarEvents.Created: carID: Guid * year: int * CarType * Color * mileage: int * vin: string * owner: Guid * condition: Condition -&gt; CarEvents</div>
+<div class="tip" id="fs109">union case CarEvents.ColorChanged: Color -&gt; CarEvents</div>
+<div class="tip" id="fs110">union case CarEvents.MileageChanged: mileage: int -&gt; CarEvents</div>
+<div class="tip" id="fs111">union case CarEvents.ConditionChanged: Condition -&gt; CarEvents</div>
+<div class="tip" id="fs112">union case CarEvents.OwnerChanged: owner: Guid -&gt; CarEvents</div>
+<div class="tip" id="fs113">type CarTriggers =<br />&#160;&#160;| Create of carID: Guid * year: int * CarType * Color * mileage: int * vin: string * owner: Guid * condition: Condition<br />&#160;&#160;| ChangeColor of Color<br />&#160;&#160;| UpdateMileage of mileage: int<br />&#160;&#160;| UpdateCondition of Condition<br />&#160;&#160;| ChangeOwner of owner: Guid<br /><br />Full name: Post.CarTriggers</div>
+<div class="tip" id="fs114">union case CarTriggers.Create: carID: Guid * year: int * CarType * Color * mileage: int * vin: string * owner: Guid * condition: Condition -&gt; CarTriggers</div>
+<div class="tip" id="fs115">union case CarTriggers.ChangeColor: Color -&gt; CarTriggers</div>
+<div class="tip" id="fs116">union case CarTriggers.UpdateMileage: mileage: int -&gt; CarTriggers</div>
+<div class="tip" id="fs117">union case CarTriggers.UpdateCondition: Condition -&gt; CarTriggers</div>
+<div class="tip" id="fs118">union case CarTriggers.ChangeOwner: owner: Guid -&gt; CarTriggers</div>
+<div class="tip" id="fs119">type DomainError = String<br /><br />Full name: Post.DomainError</div>
+<div class="tip" id="fs120">Multiple items<br />type String =<br />&#160;&#160;new : value:char -&gt; string + 7 overloads<br />&#160;&#160;member Chars : int -&gt; char<br />&#160;&#160;member Clone : unit -&gt; obj<br />&#160;&#160;member CompareTo : value:obj -&gt; int + 1 overload<br />&#160;&#160;member Contains : value:string -&gt; bool<br />&#160;&#160;member CopyTo : sourceIndex:int * destination:char[] * destinationIndex:int * count:int -&gt; unit<br />&#160;&#160;member EndsWith : value:string -&gt; bool + 2 overloads<br />&#160;&#160;member Equals : obj:obj -&gt; bool + 2 overloads<br />&#160;&#160;member GetEnumerator : unit -&gt; CharEnumerator<br />&#160;&#160;member GetHashCode : unit -&gt; int<br />&#160;&#160;...<br /><br />Full name: System.String<br /><br />--------------------<br />String(value: nativeptr&lt;char&gt;) : unit<br />String(value: nativeptr&lt;sbyte&gt;) : unit<br />String(value: char []) : unit<br />String(c: char, count: int) : unit<br />String(value: nativeptr&lt;char&gt;, startIndex: int, length: int) : unit<br />String(value: nativeptr&lt;sbyte&gt;, startIndex: int, length: int) : unit<br />String(value: char [], startIndex: int, length: int) : unit<br />String(value: nativeptr&lt;sbyte&gt;, startIndex: int, length: int, enc: Text.Encoding) : unit</div>
+<div class="tip" id="fs121">type AggregateRoot&lt;&#39;state,&#39;event,&#39;trigger&gt; =<br />&#160;&#160;{Zero: unit -&gt; &#39;state;<br />&#160;&#160;&#160;Apply: &#39;state -&gt; &#39;event -&gt; &#39;state;<br />&#160;&#160;&#160;Fire: &#39;state -&gt; &#39;trigger -&gt; Choice&lt;&#39;event,DomainError&gt;;}<br /><br />Full name: Post.AggregateRoot&lt;_,_,_&gt;</div>
+<div class="tip" id="fs122">val state : StateBuilder<br /><br />Full name: ExtCore.Control.WorkflowBuilders.state</div>
+<div class="tip" id="fs123">AggregateRoot.Zero: unit -&gt; &#39;state</div>
+<div class="tip" id="fs124">type unit = Unit<br /><br />Full name: Microsoft.FSharp.Core.unit</div>
+<div class="tip" id="fs125">AggregateRoot.Apply: &#39;state -&gt; &#39;event -&gt; &#39;state</div>
+<div class="tip" id="fs126">AggregateRoot.Fire: &#39;state -&gt; &#39;trigger -&gt; Choice&lt;&#39;event,DomainError&gt;</div>
+<div class="tip" id="fs127">val validateID : guidID:Guid -&gt; Choice&lt;Guid,string&gt;<br /><br />Full name: Post.validateID</div>
+<div class="tip" id="fs128">val guidID : Guid</div>
+<div class="tip" id="fs129">field Guid.Empty</div>
+<div class="tip" id="fs130">val validateYear : year:&#39;a -&gt; carType:&#39;b -&gt; Choice&lt;&#39;a,&#39;c&gt;<br /><br />Full name: Post.validateYear</div>
+<div class="tip" id="fs131">val year : &#39;a</div>
+<div class="tip" id="fs132">val carType : &#39;b</div>
+<div class="tip" id="fs133">val isNonNegative : num:&#39;a -&gt; Choice&lt;&#39;a,&#39;b&gt;<br /><br />Full name: Post.isNonNegative</div>
+<div class="tip" id="fs134">val num : &#39;a</div>
+<div class="tip" id="fs135">val isGreaterThan : that:&#39;a -&gt; this:&#39;b -&gt; Choice&lt;&#39;b,&#39;c&gt;<br /><br />Full name: Post.isGreaterThan</div>
+<div class="tip" id="fs136">val that : &#39;a</div>
+<div class="tip" id="fs137">val this : &#39;b</div>
+<div class="tip" id="fs138">val fireFn : state:Car -&gt; trigger:CarTriggers -&gt; Choice&lt;CarEvents,string&gt;<br /><br />Full name: Post.fireFn</div>
+<div class="tip" id="fs139">val state : Car</div>
+<div class="tip" id="fs140">val trigger : CarTriggers</div>
+<div class="tip" id="fs141">val year : int</div>
+<div class="tip" id="fs142">val carType : CarType</div>
+<div class="tip" id="fs143">val color : Color</div>
+<div class="tip" id="fs144">val mileage : int</div>
+<div class="tip" id="fs145">val vin : string</div>
+<div class="tip" id="fs146">val owner : Guid</div>
+<div class="tip" id="fs147">val condition : Condition</div>
+<div class="tip" id="fs148">val choice : ChoiceBuilder<br /><br />Full name: ExtCore.Control.WorkflowBuilders.choice</div>
+<div class="tip" id="fs149">val ownerID : Guid</div>
+<div class="tip" id="fs150">val applyFn : state:Car -&gt; event:CarEvents -&gt; Car<br /><br />Full name: Post.applyFn</div>
+<div class="tip" id="fs151">val event : CarEvents</div>
+<div class="tip" id="fs152">val root : AggregateRoot&lt;Car,CarEvents,CarTriggers&gt;<br /><br />Full name: Post.root</div>
+<div class="tip" id="fs153">val mapEnum : str:string -&gt; Choice&lt;&#39;enum,string&gt;<br /><br />Full name: Post.mapEnum</div>
+<div class="tip" id="fs154">val enum : value:int32 -&gt; &#39;U (requires enum)<br /><br />Full name: Microsoft.FSharp.Core.Operators.enum</div>
+<div class="tip" id="fs155">val str : string</div>
+<div class="tip" id="fs156">type Enum =<br />&#160;&#160;member CompareTo : target:obj -&gt; int<br />&#160;&#160;member Equals : obj:obj -&gt; bool<br />&#160;&#160;member GetHashCode : unit -&gt; int<br />&#160;&#160;member GetTypeCode : unit -&gt; TypeCode<br />&#160;&#160;member HasFlag : flag:Enum -&gt; bool<br />&#160;&#160;member ToString : unit -&gt; string + 3 overloads<br />&#160;&#160;static member Format : enumType:Type * value:obj * format:string -&gt; string<br />&#160;&#160;static member GetName : enumType:Type * value:obj -&gt; string<br />&#160;&#160;static member GetNames : enumType:Type -&gt; string[]<br />&#160;&#160;static member GetUnderlyingType : enumType:Type -&gt; Type<br />&#160;&#160;...<br /><br />Full name: System.Enum</div>
+<div class="tip" id="fs157">Enum.Parse(enumType: Type, value: string) : obj<br />Enum.Parse(enumType: Type, value: string, ignoreCase: bool) : obj</div>
+<div class="tip" id="fs158">val typedefof&lt;&#39;T&gt; : Type<br /><br />Full name: Microsoft.FSharp.Core.Operators.typedefof</div>
+<div class="tip" id="fs159">val x : exn</div>
+<div class="tip" id="fs160">val isValidString : str:&#39;a -&gt; Choice&lt;&#39;a,&#39;b&gt;<br /><br />Full name: Post.isValidString</div>
+<div class="tip" id="fs161">val str : &#39;a</div>
+<div class="tip" id="fs162">val mapCarType : payload:CarRepresentation -&gt; Choice&lt;CarType,string&gt;<br /><br />Full name: Post.mapCarType</div>
+<div class="tip" id="fs163">val payload : CarRepresentation</div>
+<div class="tip" id="fs164">val make : string</div>
+<div class="tip" id="fs165">String.Trim() : string<br />String.Trim([&lt;ParamArray&gt;] trimChars: char []) : string</div>
+<div class="tip" id="fs166">val model : string</div>
+<div class="tip" id="fs167">val bind : binding:(&#39;T -&gt; Choice&lt;&#39;U,&#39;Error&gt;) -&gt; value:Choice&lt;&#39;T,&#39;Error&gt; -&gt; Choice&lt;&#39;U,&#39;Error&gt;<br /><br />Full name: ExtCore.Choice.bind</div>
+<div class="tip" id="fs168">val validateRepresentation : payload:CarRepresentation -&gt; Choice&lt;(Guid * int * CarType * Color * int * string * Guid * Condition),string&gt;<br /><br />Full name: Post.validateRepresentation</div>
+<div class="tip" id="fs169">val mapCreate : (CarRepresentation -&gt; Choice&lt;(Car * CarTriggers list),string&gt;)<br /><br />Full name: Post.mapCreate</div>
+<div class="tip" id="fs170">val map : mapping:(&#39;T -&gt; &#39;U) -&gt; value:Choice&lt;&#39;T,&#39;Error&gt; -&gt; Choice&lt;&#39;U,&#39;Error&gt;<br /><br />Full name: ExtCore.Choice.map</div>
+<div class="tip" id="fs171">Multiple items<br />module List<br /><br />from ExtCore.Collections<br /><br />--------------------<br />module List<br /><br />from Microsoft.FSharp.Collections<br /><br />--------------------<br />type List&lt;&#39;T&gt; =<br />&#160;&#160;| ( [] )<br />&#160;&#160;| ( :: ) of Head: &#39;T * Tail: &#39;T list<br />&#160;&#160;interface IEnumerable<br />&#160;&#160;interface IEnumerable&lt;&#39;T&gt;<br />&#160;&#160;member GetSlice : startIndex:int option * endIndex:int option -&gt; &#39;T list<br />&#160;&#160;member Head : &#39;T<br />&#160;&#160;member IsEmpty : bool<br />&#160;&#160;member Item : index:int -&gt; &#39;T with get<br />&#160;&#160;member Length : int<br />&#160;&#160;member Tail : &#39;T list<br />&#160;&#160;static member Cons : head:&#39;T * tail:&#39;T list -&gt; &#39;T list<br />&#160;&#160;static member Empty : &#39;T list<br /><br />Full name: Microsoft.FSharp.Collections.List&lt;_&gt;</div>
+<div class="tip" id="fs172">Multiple items<br />val singleton : value:&#39;T -&gt; &#39;T list<br /><br />Full name: ExtCore.Collections.List.singleton<br /><br />--------------------<br />val singleton : value:&#39;T -&gt; &#39;T list<br /><br />Full name: Microsoft.FSharp.Collections.List.singleton</div>
+<div class="tip" id="fs173">val e : CarTriggers list</div>
+<div class="tip" id="fs174">AggregateRoot.Zero: unit -&gt; Car</div>
+<div class="tip" id="fs175">val evalColor : current:Color -&gt; proposed:Color -&gt; CarTriggers option<br /><br />Full name: Post.evalColor</div>
+<div class="tip" id="fs176">val current : Color</div>
+<div class="tip" id="fs177">val proposed : Color</div>
+<div class="tip" id="fs178">union case Option.None: Option&lt;&#39;T&gt;</div>
+<div class="tip" id="fs179">union case Option.Some: Value: &#39;T -&gt; Option&lt;&#39;T&gt;</div>
+<div class="tip" id="fs180">val evalMileage : current:int -&gt; proposed:int -&gt; CarTriggers option<br /><br />Full name: Post.evalMileage</div>
+<div class="tip" id="fs181">val current : int</div>
+<div class="tip" id="fs182">val proposed : int</div>
+<div class="tip" id="fs183">val evalOwner : current:Guid -&gt; proposed:Guid -&gt; CarTriggers option<br /><br />Full name: Post.evalOwner</div>
+<div class="tip" id="fs184">val current : Guid</div>
+<div class="tip" id="fs185">val proposed : Guid</div>
+<div class="tip" id="fs186">val evalCondition : current:Condition -&gt; proposed:Condition -&gt; CarTriggers option<br /><br />Full name: Post.evalCondition</div>
+<div class="tip" id="fs187">val current : Condition</div>
+<div class="tip" id="fs188">val proposed : Condition</div>
+<div class="tip" id="fs189">val compare : current:Car -&gt; Color * int * Guid * Condition -&gt; Choice&lt;(Car * CarTriggers list),&#39;a&gt;<br /><br />Full name: Post.compare</div>
+<div class="tip" id="fs190">val current : Car</div>
+<div class="tip" id="fs191">val proposed : Color * int * Guid * Condition</div>
+<div class="tip" id="fs192">val proposedColor : Color</div>
+<div class="tip" id="fs193">val proposedMileage : int</div>
+<div class="tip" id="fs194">val proposedOwner : Guid</div>
+<div class="tip" id="fs195">val proposedCondition : Condition</div>
+<div class="tip" id="fs196">val changeColorTrigger : CarTriggers option</div>
+<div class="tip" id="fs197">Car.Color: Color</div>
+<div class="tip" id="fs198">val updateMileageTrigger : CarTriggers option</div>
+<div class="tip" id="fs199">val changeOwnerTrigger : CarTriggers option</div>
+<div class="tip" id="fs200">val updateConditionTrigger : CarTriggers option</div>
+<div class="tip" id="fs201">Car.Condition: Condition</div>
+<div class="tip" id="fs202">val choose : chooser:(&#39;T -&gt; &#39;U option) -&gt; list:&#39;T list -&gt; &#39;U list<br /><br />Full name: Microsoft.FSharp.Collections.List.choose</div>
+<div class="tip" id="fs203">val mapUpdate : representation:CarRepresentation -&gt; Choice&lt;(Car * CarTriggers list),string&gt;<br /><br />Full name: Post.mapUpdate</div>
+<div class="tip" id="fs204">val representation : CarRepresentation</div>
+<div class="tip" id="fs205">val currentState : Car</div>
+<div class="tip" id="fs206">module EventStore<br /><br />from Post</div>
+<div class="tip" id="fs207">val mapDelete : carID:&#39;a -&gt; &#39;b<br /><br />Full name: Post.mapDelete</div>
+<div class="tip" id="fs208">val carID : &#39;a</div>
+<div class="tip" id="fs209">val map : command:CarCommands -&gt; Choice&lt;(Car * CarTriggers list),string&gt;<br /><br />Full name: Post.TriggerBuilder.map</div>
+<div class="tip" id="fs210">val command : CarCommands</div>
+<div class="tip" id="fs211">val car : CarRepresentation</div>
+<div class="tip" id="fs212">val execute : root:AggregateRoot&lt;&#39;a,&#39;b,&#39;c&gt; -&gt; fromState:&#39;a -&gt; triggers:seq&lt;&#39;c&gt; -&gt; Choice&lt;(&#39;a * seq&lt;&#39;b&gt;),string&gt;<br /><br />Full name: Post.execute</div>
+<div class="tip" id="fs213">val root : AggregateRoot&lt;&#39;a,&#39;b,&#39;c&gt;</div>
+<div class="tip" id="fs214">val fromState : &#39;a</div>
+<div class="tip" id="fs215">val triggers : seq&lt;&#39;c&gt;</div>
+<div class="tip" id="fs216">val fold : folder:(&#39;State -&gt; &#39;T -&gt; &#39;State) -&gt; state:&#39;State -&gt; source:seq&lt;&#39;T&gt; -&gt; &#39;State<br /><br />Full name: Microsoft.FSharp.Collections.Seq.fold</div>
+<div class="tip" id="fs217">val state : Choice&lt;(&#39;a * &#39;b),DomainError&gt; list</div>
+<div class="tip" id="fs218">val t : &#39;c</div>
+<div class="tip" id="fs219">val append : list1:&#39;T list -&gt; list2:&#39;T list -&gt; &#39;T list<br /><br />Full name: Microsoft.FSharp.Collections.List.append</div>
+<div class="tip" id="fs220">val s : &#39;a</div>
+<div class="tip" id="fs221">val last : source:seq&lt;&#39;T&gt; -&gt; &#39;T<br /><br />Full name: Microsoft.FSharp.Collections.Seq.last</div>
+<div class="tip" id="fs222">val e : &#39;b</div>
+<div class="tip" id="fs223">AggregateRoot.Fire: &#39;a -&gt; &#39;c -&gt; Choice&lt;&#39;b,DomainError&gt;</div>
+<div class="tip" id="fs224">AggregateRoot.Apply: &#39;a -&gt; &#39;b -&gt; &#39;a</div>
+<div class="tip" id="fs225">property List.Empty: &#39;T list</div>
+<div class="tip" id="fs226">val data : seq&lt;&#39;a * &#39;b&gt;</div>
+<div class="tip" id="fs227">val state : &#39;a</div>
+<div class="tip" id="fs228">val events : seq&lt;&#39;b&gt;</div>
+<div class="tip" id="fs229">val mapError : mapping:(&#39;Error1 -&gt; &#39;Error2) -&gt; value:Choice&lt;&#39;T,&#39;Error1&gt; -&gt; Choice&lt;&#39;T,&#39;Error2&gt;<br /><br />Full name: ExtCore.Choice.mapError</div>
+<div class="tip" id="fs230">val concatArray : arr:string [] -&gt; string<br /><br />Full name: ExtCore.String.concatArray</div>
+<div class="tip" id="fs231">val commandHandler : command:CarCommands -&gt; Choice&lt;unit,string&gt;<br /><br />Full name: Post.commandHandler</div>
+<div class="tip" id="fs232">val triggers : CarTriggers list</div>
+<div class="tip" id="fs233">module TriggerBuilder<br /><br />from Post</div>
+<div class="tip" id="fs234">val finalState : Car</div>
+<div class="tip" id="fs235">val events : seq&lt;CarEvents&gt;</div>
+          
+        </div>
+        <div class="span1"></div>
+      </div>
+    </div>
+  </body>
+</html>
